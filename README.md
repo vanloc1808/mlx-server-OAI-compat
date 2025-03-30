@@ -1,7 +1,7 @@
 # proxy-OAI-compat
 
 ## Description
-This repository hosts a high-performance proxy server designed to be fully compatible with the OAI-compat protocol. Developed using Python and powered by the FastAPI framework, it provides an efficient, scalable, and user-friendly solution for handling requests.
+This repository hosts a high-performance proxy server designed to be fully compatible with the OAI-compat protocol. Developed using Python and powered by the FastAPI framework, it provides an efficient, scalable, and user-friendly solution for handling vision-based inference requests.
 
 > **Note:** This project currently supports **MacOS with M-series chips** only.
 
@@ -37,15 +37,94 @@ python -c "import platform; print(platform.processor())"
 ```
 If the output is `i386` (on an M-series machine), you are using a non-native Python. Switch to a native Python version. A good approach is to use [Conda](https://stackoverflow.com/questions/65415996/how-to-specify-the-architecture-or-platform-for-a-new-conda-environment-apple).
 
-
 ## Usage
 To start the proxy server, activate the virtual environment and run the main application file:
 ```bash
 source oai-compat-server/bin/activate
-python app.main --model-path <path-to-model> --model-type <model-type>
+python -m app.main \
+  --model-path <path-to-model> \
+  --model-type mlx_vlm \
+  --max-concurrency 1 \
+  --queue-timeout 300 \
+  --queue-size 100
 ```
 
-The server will start and listen for incoming requests. You can configure server settings in the `config.json` file.
+Parameters:
+- `--model-path`: Path to the model directory
+- `--model-type`: Type of model to use (currently only `mlx_vlm` is supported)
+- `--max-concurrency`: Maximum number of concurrent requests (default: 1)
+- `--queue-timeout`: Request timeout in seconds (default: 300)
+- `--queue-size`: Maximum queue size for pending requests (default: 100)
+- `--port`: Port to run the server on (default: 8000)
+- `--host`: Host to run the server on (default: 0.0.0.0)
+
+## Request Queue System
+
+The server implements a robust request queue system to prevent overloading the MLX model and ensure fair processing of requests.
+
+### Key Features
+
+- **Concurrency control**: Limits the number of simultaneous model inferences
+- **Queuing**: Handles pending requests in a fair, first-come-first-served manner
+- **Timeout handling**: Automatically fails requests that exceed the configured timeout
+- **Status monitoring**: Provides endpoints to monitor queue status
+
+### Architecture
+
+The queue system consists of two main components:
+
+1. **RequestQueue**: A generic async queue implementation that:
+   - Manages a queue of pending requests
+   - Controls concurrent execution with a semaphore
+   - Handles timeouts and errors
+   - Provides statistics about queue status
+
+2. **MLXHandler integration**: The service maintains a queue for vision requests (image + text)
+
+### Monitoring
+
+The service provides an endpoint to monitor queue statistics:
+
+```bash
+curl http://localhost:8000/v1/queue/stats
+```
+
+Response example:
+
+```json
+{
+  "status": "ok",
+  "queue_stats": {
+    "vision_queue": {
+      "running": true,
+      "queue_size": 3,
+      "max_queue_size": 100,
+      "active_requests": 5,
+      "max_concurrency": 2
+    }
+  }
+}
+```
+
+### Error Handling
+
+When the queue is full, the server returns a 429 error:
+
+```json
+{
+  "detail": "Too many requests. Service is at capacity."
+}
+```
+
+When a request times out, an exception is raised in the client's response.
+
+### Implementation Notes
+
+- Streaming requests are not queued because they are inherently long-running and would block the queue
+- Non-streaming vision requests are handled through the queue system
+- Each request gets a unique ID for tracking and debugging
+- Queue statistics are updated in real-time
+- Currently, only vision requests are supported; text-only requests are rejected with a 400 status code
 
 ## API Usage
 
@@ -77,13 +156,15 @@ curl localhost:8000/v1/chat/completions \
   }'
 ```
 
-### An example of a vision request
+### Request Format
 - `messages`: Array of message objects containing:
-  - `role`: The role of the message sender ("user" or "assistant")
+  - `role`: The role of the message sender ("user", "assistant", or "system")
   - `content`: For vision requests, an array of content objects:
     - `type`: Either "text" or "image_url"
     - `text`: The text prompt (for type "text")
     - `image_url`: Object containing the image URL (for type "image_url")
+- `stream`: Optional boolean to enable streaming responses
+- Additional parameters: `temperature`, `max_tokens`, `top_p`, etc.
 
 ### Response Format
 The server will return responses in OpenAI-compatible format:
@@ -133,6 +214,44 @@ curl localhost:8000/v1/chat/completions \
       }
     ] 
   }'
+```
+
+### Multi-turn Conversations
+The API supports multi-turn conversations with images. You can include previous messages in the history:
+
+```json
+{
+  "model": "mlx-community/Qwen2-VL-2B-Instruct-4bit",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a helpful assistant that describes images."
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "What is in this image?"
+        },
+        {
+          "type": "image_url",
+          "image_url": {
+            "url": "https://example.com/image.jpg"
+          }
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": "The image shows a wooden boardwalk..."
+    },
+    {
+      "role": "user",
+      "content": "Are there any people in the image?"
+    }
+  ]
+}
 ```
 
 ## Contributing

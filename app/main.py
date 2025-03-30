@@ -9,6 +9,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 import json
+from app.handler.queue import RequestQueue
 
 # Configure logging
 logging.basicConfig(
@@ -23,6 +24,9 @@ def parse_args():
     parser.add_argument("--model-type", type=str, required=True, help="Type of the model")
     parser.add_argument("--port", type=int, default=8000, help="Port to run the server on")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to run the server on")
+    parser.add_argument("--max-concurrency", type=int, default=1, help="Maximum number of concurrent requests")
+    parser.add_argument("--queue-timeout", type=int, default=300, help="Request queue timeout in seconds")
+    parser.add_argument("--queue-size", type=int, default=100, help="Maximum queue size for pending requests")
     return parser.parse_args()
 
 # Global handler instance
@@ -36,7 +40,22 @@ async def lifespan(app: FastAPI):
     try:
         logger.info(f"Initializing MLX handler with model path: {args.model_path}")
         if args.model_type == "mlx_vlm":
-            handler = MLXHandler(args.model_path)
+            handler = MLXHandler(
+                model_path=args.model_path,
+                max_concurrency=args.max_concurrency
+            )
+            # Initialize request queue with timeout and size
+            await handler.vision_queue.stop()
+            
+            # Re-create queue with new parameters
+            handler.vision_queue = RequestQueue(
+                max_concurrency=args.max_concurrency,
+                timeout=args.queue_timeout,
+                queue_size=args.queue_size
+            )
+            
+            # Initialize queue
+            await handler.initialize_queues()
         else:
             raise ValueError(f"Unsupported model type: {args.model_type}")
         logger.info("MLX handler initialized successfully")
@@ -46,6 +65,9 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     logger.info("Shutting down application")
+    if handler:
+        # Ensure queue is stopped
+        await handler.vision_queue.stop()
 
 # Create FastAPI app
 app = FastAPI(
@@ -92,6 +114,24 @@ async def health():
         logger.error(f"Health check failed: {str(e)}")
         raise HTTPException(status_code=500, detail="Health check failed")
 
+@app.get("/v1/queue/stats")
+async def queue_stats():
+    """
+    Get queue statistics.
+    """
+    if handler is None:
+        raise HTTPException(status_code=503, detail="Model handler not initialized")
+    
+    try:
+        stats = await handler.get_queue_stats()
+        return {
+            "status": "ok",
+            "queue_stats": stats
+        }
+    except Exception as e:
+        logger.error(f"Failed to get queue stats: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get queue stats")
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
     """
@@ -101,7 +141,13 @@ async def chat_completions(request: ChatCompletionRequest):
         raise HTTPException(status_code=503, detail="Model handler not initialized")
     
     try:
-        if request.is_vision_request():
+        # Process the request to fix message order if needed
+        request.fix_message_order()
+        
+        # Check if this is a vision request
+        is_vision_request = request.is_vision_request()
+        
+        if is_vision_request:
             logger.info("Processing vision request")
             
             if request.stream:
@@ -133,6 +179,21 @@ async def chat_completions(request: ChatCompletionRequest):
                         }
                         yield f"data: {json.dumps(error_chunk)}\n\n"
                     finally:
+                        # Send final chunk with finish_reason
+                        final_chunk = {
+                            "id": f"chatcmpl-{int(time.time())}",
+                            "object": "chat.completion.chunk",
+                            "created": int(time.time()),
+                            "model": request.model,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {},
+                                    "finish_reason": "stop"
+                                }
+                            ]
+                        }
+                        yield f"data: {json.dumps(final_chunk)}\n\n"
                         yield "data: [DONE]\n\n"
                 
                 return StreamingResponse(
@@ -165,9 +226,9 @@ async def chat_completions(request: ChatCompletionRequest):
                         }
                     ]
                 }
-        
-        # TODO: handle text request
-        raise HTTPException(status_code=501, detail="Text-only requests not yet implemented")
+        else:
+            # We don't support text-only requests yet
+            raise HTTPException(status_code=400, detail="Only vision requests are supported")
     except Exception as e:
         logger.error(f"Error processing chat completion request: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

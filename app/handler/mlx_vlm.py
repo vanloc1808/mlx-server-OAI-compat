@@ -13,6 +13,8 @@ from concurrent.futures import ThreadPoolExecutor
 from app.handler.schema import ChatCompletionRequest
 from app.models.mlx_vlm import MLX_VLM
 from fastapi import HTTPException
+from app.handler.queue import RequestQueue
+import uuid
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -23,19 +25,29 @@ class MLXHandler:
     Provides caching, concurrent image processing, and robust error handling.
     """
 
-    def __init__(self, model_path: str, max_workers: int = 4):
+    def __init__(self, model_path: str, max_workers: int = 4, max_concurrency: int = 1):
         """
         Initialize the handler with the specified model path.
         
         Args:
             model_path (str): Path to the model directory.
             max_workers (int): Maximum number of worker threads for image processing.
+            max_concurrency (int): Maximum number of concurrent model inference tasks.
         """
         self.model_path = model_path
         self.model = MLX_VLM(model_path)
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self.temp_dir = tempfile.mkdtemp(prefix="mlx_vlm_")
+        
+        # Initialize request queue for vision tasks
+        self.vision_queue = RequestQueue(max_concurrency=max_concurrency)
+        
         logger.info(f"Initialized MLXHandler with model path: {model_path}")
+        
+    async def initialize_queues(self):
+        """Initialize and start the request queue."""
+        await self.vision_queue.start(self._process_vision_request)
+        logger.info("Started request queue for vision processing")
 
     def __del__(self):
         """Cleanup resources on deletion."""
@@ -151,9 +163,13 @@ class MLXHandler:
         Returns:
             AsyncGenerator: Yields response chunks.
         """
+        chat_messages, image_paths, model_params = await self._prepare_vision_request(request)
+        
+        # Create a unique request ID
+        request_id = f"vision-{uuid.uuid4()}"
+        
+        # Submit the vision request directly (not through queue for streaming)
         try:
-            chat_messages, image_paths, model_params = await self._prepare_vision_request(request)
-            
             # Get the generator from the model
             response_generator = self.model(
                 images=image_paths,
@@ -172,7 +188,7 @@ class MLXHandler:
                     else:
                         yield str(chunk)
         except Exception as e:
-            logger.error(f"Error in vision stream generation: {str(e)}")
+            logger.error(f"Error in vision stream generation for request {request_id}: {str(e)}")
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to generate vision stream: {str(e)}"
@@ -181,6 +197,7 @@ class MLXHandler:
     async def generate_vision_response(self, request: ChatCompletionRequest):
         """
         Generate a complete response for vision-based chat completion requests.
+        Uses the request queue for handling concurrent requests.
         
         Args:
             request: ChatCompletionRequest object containing the messages.
@@ -188,16 +205,82 @@ class MLXHandler:
         Returns:
             str: Complete response.
         """
-        chat_messages, image_paths, model_params = await self._prepare_vision_request(request)
+        try:
+            # Create a unique request ID
+            request_id = f"vision-{uuid.uuid4()}"
+            
+            # Prepare the vision request
+            chat_messages, image_paths, model_params = await self._prepare_vision_request(request)
+            
+            # Create a request data object
+            request_data = {
+                "images": image_paths,
+                "messages": chat_messages,
+                "stream": False,
+                **model_params
+            }
+            
+            # Submit to the vision queue and wait for result
+            return await self.vision_queue.submit(request_id, request_data)
+            
+        except asyncio.QueueFull:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests. Service is at capacity."
+            )
+        except Exception as e:
+            logger.error(f"Error in vision response generation: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to generate vision response: {str(e)}"
+            )
+            
+    async def _process_vision_request(self, request_data: Dict[str, Any]) -> str:
+        """
+        Process a vision request. This is the worker function for the vision queue.
         
-        # For non-streaming, the model returns the response directly
-        response = self.model(
-            images=image_paths,
-            messages=chat_messages,
-            stream=False,
-            **model_params
-        )
-        return response
+        Args:
+            request_data: Dictionary containing the request data.
+            
+        Returns:
+            str: The model's response.
+        """
+        try:
+            # Extract request parameters
+            images = request_data.get("images", [])
+            messages = request_data.get("messages", [])
+            stream = request_data.get("stream", False)
+            
+            # Remove these keys from model_params
+            model_params = request_data.copy()
+            model_params.pop("images", None)
+            model_params.pop("messages", None)
+            model_params.pop("stream", None)
+            
+            # Call the model
+            response = self.model(
+                images=images,
+                messages=messages,
+                stream=stream,
+                **model_params
+            )
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Error processing vision request: {str(e)}")
+            raise
+    
+    async def get_queue_stats(self) -> Dict[str, Any]:
+        """
+        Get statistics from the vision queue.
+        
+        Returns:
+            Dict with queue statistics.
+        """
+        return {
+            "vision_queue": self.vision_queue.get_queue_stats()
+        }
 
     async def _prepare_vision_request(self, request: ChatCompletionRequest) -> Tuple[List[Dict[str, str]], List[str], Dict[str, Any]]:
         """
@@ -227,49 +310,89 @@ class MLXHandler:
         try:
             # Process each message in the request
             for message in request.messages:
-                # Handle non-user messages (assistant, system, etc.)
-                if message.role != "user":
+                # Handle system messages
+                if message.role == "system":
                     chat_messages.append({
-                        "role": message.role,
+                        "role": "system",
+                        "content": message.content
+                    })
+                    continue
+
+                # Handle assistant messages
+                if message.role == "assistant":
+                    chat_messages.append({
+                        "role": "assistant",
                         "content": message.content
                     })
                     continue
 
                 # Handle user messages
-                if isinstance(message.content, str):
-                    # Simple text message
-                    chat_messages.append({
-                        "role": "user",
-                        "content": message.content
-                    })
-                    continue
-                    
-                elif isinstance(message.content, list):
-                    # Message containing both text and images
-                    texts = []
-                    images = []
-                    
-                    for item in message.content:
-                        if item.type == "text":
-                            texts.append(item.text)
-                        elif item.type == "image_url":
-                            images.append(item.image_url.url)
-                    
-                    # Add text content if present
-                    if texts:
+                if message.role == "user":
+                    if isinstance(message.content, str):
+                        # Simple text message
                         chat_messages.append({
                             "role": "user",
-                            "content": " ".join(texts)
+                            "content": message.content
                         })
-                    
-                    # Collect image URLs
-                    if images:
-                        image_urls.extend(images)
-                else:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Invalid message content format"
-                    )
+                        continue
+                        
+                    elif isinstance(message.content, list):
+                        # Message containing both text and images
+                        texts = []
+                        images = []
+                        
+                        for item in message.content:
+                            if item.type == "text":
+                                if not item.text or not item.text.strip():
+                                    continue
+                                texts.append(item.text.strip())
+                            elif item.type == "image_url":
+                                url = item.image_url.url
+                                if not url:
+                                    raise HTTPException(
+                                        status_code=400,
+                                        detail="Empty image URL provided"
+                                    )
+                                if url.startswith("data:"):
+                                    # Validate base64 image format
+                                    try:
+                                        header, encoded = url.split(",", 1)
+                                        if not header.startswith("data:image/"):
+                                            raise ValueError("Invalid image format")
+                                        base64.b64decode(encoded)
+                                    except Exception as e:
+                                        raise HTTPException(
+                                            status_code=400,
+                                            detail=f"Invalid base64 image: {str(e)}"
+                                        )
+                                images.append(url)
+                            else:
+                                raise HTTPException(
+                                    status_code=400,
+                                    detail=f"Unsupported content type: {item.type}"
+                                )
+                        
+                        # Add text content if present
+                        if texts:
+                            chat_messages.append({
+                                "role": "user",
+                                "content": " ".join(texts)
+                            })
+                        
+                        # Collect image URLs
+                        if images:
+                            # Check image count limit (OpenAI typically allows 1-4 images)
+                            if len(images) > 4:
+                                raise HTTPException(
+                                    status_code=400,
+                                    detail="Too many images in a single message"
+                                )
+                            image_urls.extend(images)
+                    else:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Invalid message content format"
+                        )
 
             # Process image URLs to get local file paths
             image_paths = await self.process_image_urls(image_urls)
@@ -282,9 +405,24 @@ class MLXHandler:
                 "frequency_penalty": request.frequency_penalty,
                 "presence_penalty": request.presence_penalty,
                 "stop": request.stop,
-                "n": request.n
+                "n": request.n,
+                "seed": request.seed
             }
             model_params = {k: v for k, v in model_params.items() if v is not None}
+
+            # Handle response format if specified
+            if request.response_format:
+                if request.response_format.get("type") == "json_object":
+                    # Add JSON mode parameters if needed
+                    model_params["response_format"] = "json"
+
+            # Handle tool calls if specified
+            if request.tools:
+                model_params["tools"] = request.tools
+                
+                # Handle tool choice
+                if request.tool_choice:
+                    model_params["tool_choice"] = request.tool_choice
 
             # Log processed data for debugging
             logger.debug(f"Processed chat messages: {chat_messages}")
@@ -293,6 +431,8 @@ class MLXHandler:
 
             return chat_messages, image_paths, model_params
 
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Failed to prepare vision request: {str(e)}")
             raise HTTPException(

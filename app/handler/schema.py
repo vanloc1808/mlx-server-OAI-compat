@@ -54,7 +54,8 @@ class ChatCompletionRequest(BaseModel):
     model: str = Config.TEXT_MODEL          # Model to use, defaults to text model
     messages: List[Message]                 # List of messages in the chat
     stream: Optional[bool] = False          # Whether to stream the response
-    tools: Optional[Any] = None             # Optional list of tools to use
+    tools: Optional[List[Dict[str, Any]]] = None  # Optional list of tools to use
+    tool_choice: Optional[Union[str, Dict[str, Any]]] = None  # Tool selection behavior
     max_tokens: Optional[int] = None        # Maximum number of tokens to generate
     temperature: Optional[float] = 0.7      # Sampling temperature
     top_p: Optional[float] = 1.0           # Nucleus sampling parameter
@@ -62,16 +63,51 @@ class ChatCompletionRequest(BaseModel):
     presence_penalty: Optional[float] = 0.0   # Presence penalty
     stop: Optional[List[str]] = None        # Stop sequences
     n: Optional[int] = 1                    # Number of completions to generate
+    response_format: Optional[Dict[str, str]] = None  # Response format specification
+    seed: Optional[int] = None              # Random seed for deterministic outputs
+    user: Optional[str] = None              # User identifier for tracking
 
     @validator("messages")
     def check_messages_not_empty(cls, v):
         """
-        Ensure that the messages list is not empty.
+        Ensure that the messages list is not empty and validate message structure.
         """
         if not v:
             raise ValueError("messages cannot be empty")
+        
+        # Validate message history length
+        if len(v) > 100:  # OpenAI's limit is typically around 100 messages
+            raise ValueError("message history too long")
+            
+        # Validate message roles
+        valid_roles = {"user", "assistant", "system"}
+        for msg in v:
+            if msg.role not in valid_roles:
+                raise ValueError(f"invalid role: {msg.role}")
+                
         return v
-    
+
+    @validator("temperature")
+    def check_temperature(cls, v):
+        """
+        Validate temperature is between 0 and 2.
+        """
+        if v is not None and (v < 0 or v > 2):
+            raise ValueError("temperature must be between 0 and 2")
+        return v
+
+    @validator("max_tokens")
+    def check_max_tokens(cls, v):
+        """
+        Validate max_tokens is positive and within reasonable limits.
+        """
+        if v is not None:
+            if v <= 0:
+                raise ValueError("max_tokens must be positive")
+            if v > 4096:  # Typical limit for GPT-4
+                raise ValueError("max_tokens too high")
+        return v
+
     def is_vision_request(self) -> bool:
         """
         Check if the request includes image content, indicating a vision-based request.
