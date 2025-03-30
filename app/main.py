@@ -141,9 +141,7 @@ async def chat_completions(request: ChatCompletionRequest):
         raise HTTPException(status_code=503, detail="Model handler not initialized")
     
     try:
-        # Process the request to fix message order if needed
-        request.fix_message_order()
-        
+        # Process the request to fix message order if needed        
         # Check if this is a vision request
         is_vision_request = request.is_vision_request()
         
