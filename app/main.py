@@ -141,7 +141,8 @@ async def chat_completions(request: ChatCompletionRequest):
         raise HTTPException(status_code=503, detail="Model handler not initialized")
     
     try:
-        # Process the request to fix message order if needed        
+        # Process the request to fix message order if needed    
+        request.fix_message_order()
         # Check if this is a vision request
         is_vision_request = request.is_vision_request()
         
@@ -225,8 +226,85 @@ async def chat_completions(request: ChatCompletionRequest):
                     ]
                 }
         else:
-            # We don't support text-only requests yet
-            raise HTTPException(status_code=400, detail="Only vision requests are supported")
+            # Add support for text responses
+            logger.info("Processing text-only request")
+            
+            if request.stream:
+                # For streaming, get the generator and wrap it in OpenAI format
+                async def stream_wrapper():
+                    try:
+                        async for chunk in handler.generate_text_stream(request):
+                            response_chunk = {
+                                "id": f"chatcmpl-{int(time.time())}",
+                                "object": "chat.completion.chunk",
+                                "created": int(time.time()),
+                                "model": request.model,
+                                "choices": [
+                                    {
+                                        "index": 0,
+                                        "delta": {"content": chunk},
+                                        "finish_reason": None
+                                    }
+                                ]
+                            }
+                            yield f"data: {json.dumps(response_chunk)}\n\n"
+                    except Exception as e:
+                        logger.error(f"Error in stream wrapper: {str(e)}")
+                        error_chunk = {
+                            "error": {
+                                "message": str(e),
+                                "type": "internal_error"
+                            }
+                        }
+                        yield f"data: {json.dumps(error_chunk)}\n\n"
+                    finally:
+                        # Send final chunk with finish_reason
+                        final_chunk = {
+                            "id": f"chatcmpl-{int(time.time())}",
+                            "object": "chat.completion.chunk",
+                            "created": int(time.time()),
+                            "model": request.model,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {},
+                                    "finish_reason": "stop"
+                                }
+                            ]
+                        }
+                        yield f"data: {json.dumps(final_chunk)}\n\n"
+                        yield "data: [DONE]\n\n"
+                
+                return StreamingResponse(
+                    stream_wrapper(),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no"
+                    }
+                )
+            else:
+                # For non-streaming, get the complete response
+                final_response = await handler.generate_text_response(request)
+                
+                # Format the final response in OpenAI's format
+                return {
+                    "id": "chatcmpl-" + str(int(time.time())),
+                    "object": "chat.completion",
+                    "created": int(time.time()),
+                    "model": request.model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": final_response
+                            },
+                            "finish_reason": "stop"
+                        }
+                    ]
+                }
     except Exception as e:
         logger.error(f"Error processing chat completion request: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

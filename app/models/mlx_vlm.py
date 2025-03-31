@@ -35,8 +35,8 @@ class MLX_VLM:
         
     def __call__(
         self, 
-        images: List[str], 
         messages: List[Dict[str, str]], 
+        images: List[str] = None,
         stream: bool = False, 
         **kwargs
     ) -> Union[str, Generator[str, None, None]]:
@@ -59,7 +59,7 @@ class MLX_VLM:
             self.processor, 
             self.config, 
             messages, 
-            num_images=len(images)
+            num_images=len(images) if images else 0
         )
         
         # Set default parameters if not provided
@@ -109,7 +109,6 @@ if __name__ == "__main__":
             start_time = time.time()
             
             response = model(
-                images=[test_image],
                 messages=test_messages,
                 stream=True
             )

@@ -113,13 +113,20 @@ class ChatCompletionRequest(BaseModel):
         Check if the request includes image content, indicating a vision-based request.
         If so, switch the model to the vision model.
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         for message in self.messages:
             content = message.content
             if isinstance(content, list):
                 for item in content:
-                    if item.type == "image_url":
-                        self.model = Config.VISION_MODEL    
-                        return True        
+                    if hasattr(item, 'type') and item.type == "image_url":
+                        if hasattr(item, 'image_url') and item.image_url and item.image_url.url:
+                            logger.debug(f"Detected vision request with image: {item.image_url.url[:30]}...")
+                            self.model = Config.VISION_MODEL    
+                            return True
+        
+        logger.debug(f"No images detected, treating as text-only request")
         return False
 
     def fix_message_order(self) -> None:
@@ -134,6 +141,11 @@ class ChatCompletionRequest(BaseModel):
         last_role = None
         
         for msg in self.messages:
+            if isinstance(msg.content, list):
+                # Nothing to do for text + image messages
+                fixed_messages.append(msg)
+                continue
+        
             role = msg.role.strip().lower()
             content = msg.content.strip()
             

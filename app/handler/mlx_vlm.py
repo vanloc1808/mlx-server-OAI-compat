@@ -39,7 +39,9 @@ class MLXHandler:
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self.temp_dir = tempfile.mkdtemp(prefix="mlx_vlm_")
         
-        # Initialize request queue for vision tasks
+        # Initialize request queue for vision and text tasks
+        # We use the same queue for both vision and text tasks for simplicity
+        # and to ensure we don't overload the model with too many concurrent requests
         self.vision_queue = RequestQueue(max_concurrency=max_concurrency)
         
         logger.info(f"Initialized MLXHandler with model path: {model_path}")
@@ -47,7 +49,7 @@ class MLXHandler:
     async def initialize_queues(self):
         """Initialize and start the request queue."""
         await self.vision_queue.start(self._process_vision_request)
-        logger.info("Started request queue for vision processing")
+        logger.info("Started request queue for vision and text processing")
 
     def __del__(self):
         """Cleanup resources on deletion."""
@@ -273,14 +275,151 @@ class MLXHandler:
     
     async def get_queue_stats(self) -> Dict[str, Any]:
         """
-        Get statistics from the vision queue.
+        Get statistics from the request queue.
         
         Returns:
             Dict with queue statistics.
         """
         return {
-            "vision_queue": self.vision_queue.get_queue_stats()
+            "request_queue": self.vision_queue.get_queue_stats()
         }
+
+    async def generate_text_stream(self, request: ChatCompletionRequest):
+        """
+        Generate a streaming response for text-only chat completion requests.
+        
+        Args:
+            request: ChatCompletionRequest object containing the messages.
+        
+        Returns:
+            AsyncGenerator: Yields response chunks.
+        """
+        chat_messages, model_params = await self._prepare_text_request(request)
+        
+        # Create a unique request ID
+        request_id = f"text-{uuid.uuid4()}"
+        
+        try:
+            # Get the generator from the model
+            response_generator = self.model(
+                messages=chat_messages,
+                stream=True,
+                **model_params
+            )
+            
+            # Process and yield each chunk asynchronously
+            for chunk in response_generator:
+                if chunk:
+                    if hasattr(chunk, 'text'):
+                        yield chunk.text
+                    elif isinstance(chunk, str):
+                        yield chunk
+                    else:
+                        yield str(chunk)
+        except Exception as e:
+            logger.error(f"Error in text stream generation for request {request_id}: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to generate text stream: {str(e)}"
+            )
+
+    async def generate_text_response(self, request: ChatCompletionRequest):
+        """
+        Generate a complete response for text-only chat completion requests.
+        Uses the request queue for handling concurrent requests.
+        
+        Args:
+            request: ChatCompletionRequest object containing the messages.
+        
+        Returns:
+            str: Complete response.
+        """
+        try:
+            # Create a unique request ID
+            request_id = f"text-{uuid.uuid4()}"
+            
+            # Prepare the text request
+            chat_messages, model_params = await self._prepare_text_request(request)
+            
+            # Create a request data object
+            request_data = {
+                "messages": chat_messages,
+                "stream": False,
+                **model_params
+            }
+            
+            # Submit to the vision queue (reusing the same queue for text requests)
+            return await self.vision_queue.submit(request_id, request_data)
+            
+        except asyncio.QueueFull:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests. Service is at capacity."
+            )
+        except Exception as e:
+            logger.error(f"Error in text response generation: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to generate text response: {str(e)}"
+            )
+
+    async def _prepare_text_request(self, request: ChatCompletionRequest) -> Tuple[List[Dict[str, str]], Dict[str, Any]]:
+        """
+        Prepare a text-only request by processing messages.
+        
+        Args:
+            request (ChatCompletionRequest): The incoming request containing messages and parameters.
+            
+        Returns:
+            Tuple[List[Dict[str, str]], Dict[str, Any]]: A tuple containing:
+                - List of processed chat messages
+                - Dictionary of model parameters
+                
+        Raises:
+            HTTPException: If message content is invalid.
+        """
+        chat_messages = []
+
+        try:
+            
+            # Nothing to handle with messages for text-only requests
+            chat_messages = request.messages
+
+            # Extract model parameters, filtering out None values
+            model_params = {
+                k: v for k, v in {
+                    "max_tokens": request.max_tokens,
+                    "temperature": request.temperature,
+                    "top_p": request.top_p,
+                    "frequency_penalty": request.frequency_penalty, 
+                    "presence_penalty": request.presence_penalty,
+                    "stop": request.stop,
+                    "n": request.n,
+                    "seed": request.seed
+                }.items() if v is not None
+            }
+
+            # Handle response format
+            if request.response_format and request.response_format.get("type") == "json_object":
+                model_params["response_format"] = "json"
+
+            # Handle tools and tool choice
+            if request.tools:
+                model_params["tools"] = request.tools
+                if request.tool_choice:
+                    model_params["tool_choice"] = request.tool_choice
+
+            # Log processed data
+            logger.debug(f"Processed text chat messages: {chat_messages}")
+            logger.debug(f"Model parameters: {model_params}")
+
+            return chat_messages, model_params
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to prepare text request: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Failed to process request: {str(e)}")
 
     async def _prepare_vision_request(self, request: ChatCompletionRequest) -> Tuple[List[Dict[str, str]], List[str], Dict[str, Any]]:
         """
