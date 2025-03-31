@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 def parse_args():
     parser = argparse.ArgumentParser(description="OAI-compatible proxy")
     parser.add_argument("--model-path", type=str, required=True, help="Path to the model")
-    parser.add_argument("--model-type", type=str, required=True, help="Type of the model")
     parser.add_argument("--port", type=int, default=8000, help="Port to run the server on")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to run the server on")
     parser.add_argument("--max-concurrency", type=int, default=1, help="Maximum number of concurrent requests")
@@ -39,25 +38,22 @@ async def lifespan(app: FastAPI):
     args = parse_args()
     try:
         logger.info(f"Initializing MLX handler with model path: {args.model_path}")
-        if args.model_type == "mlx_vlm":
-            handler = MLXHandler(
-                model_path=args.model_path,
-                max_concurrency=args.max_concurrency
-            )
-            # Initialize request queue with timeout and size
-            await handler.vision_queue.stop()
-            
-            # Re-create queue with new parameters
-            handler.vision_queue = RequestQueue(
-                max_concurrency=args.max_concurrency,
-                timeout=args.queue_timeout,
-                queue_size=args.queue_size
-            )
-            
-            # Initialize queue
-            await handler.initialize_queues()
-        else:
-            raise ValueError(f"Unsupported model type: {args.model_type}")
+        handler = MLXHandler(
+            model_path=args.model_path,
+            max_concurrency=args.max_concurrency
+        )
+        # Initialize request queue with timeout and size
+        await handler.vision_queue.stop()
+        
+        # Re-create queue with new parameters
+        handler.vision_queue = RequestQueue(
+            max_concurrency=args.max_concurrency,
+            timeout=args.queue_timeout,
+            queue_size=args.queue_size
+        )
+        
+        # Initialize queue
+        await handler.initialize_queues()
         logger.info("MLX handler initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize MLX handler: {str(e)}")

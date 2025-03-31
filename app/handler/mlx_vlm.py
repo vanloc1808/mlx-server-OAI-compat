@@ -5,7 +5,8 @@ import tempfile
 import hashlib
 import logging
 import asyncio
-import time  # Add time import for tracking
+import time
+import json
 from typing import List, Dict, Any, Optional, Union, Tuple
 from PIL import Image
 from io import BytesIO
@@ -16,6 +17,7 @@ from app.models.mlx_vlm import MLX_VLM
 from fastapi import HTTPException
 from app.handler.queue import RequestQueue
 import uuid
+from collections import defaultdict
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -44,6 +46,19 @@ class MLXHandler:
         # We use the same queue for both vision and text tasks for simplicity
         # and to ensure we don't overload the model with too many concurrent requests
         self.vision_queue = RequestQueue(max_concurrency=max_concurrency)
+        
+        # Initialize metrics tracking
+        self.metrics = {
+            "total_requests": 0,
+            "total_tokens": 0,
+            "total_time": 0,
+            "request_types": defaultdict(int),
+            "error_count": 0,
+            "avg_tps": 0,
+            "max_tps": 0,
+            "min_tps": float('inf'),
+            "request_history": []
+        }
         
         logger.info(f"Initialized MLXHandler with model path: {model_path}")
         
@@ -179,6 +194,8 @@ class MLXHandler:
             # Start timing
             start_time = time.time()
             total_tokens = 0
+            total_words = 0
+            total_chars = 0
             
             # Get the generator from the model
             response_generator = self.model(
@@ -201,16 +218,29 @@ class MLXHandler:
                     
                     # Update token count
                     if text_chunk:
-                        total_tokens += self._estimate_tokens(text_chunk)
+                        chunk_metrics = self._estimate_tokens(text_chunk)
+                        total_tokens += chunk_metrics["estimated_tokens"]
+                        total_words += chunk_metrics["word_count"]
+                        total_chars += chunk_metrics["char_count"]
                     
                     yield text_chunk
             
             # Calculate and log TPS statistics
             elapsed_time = time.time() - start_time
             tps = total_tokens / elapsed_time if elapsed_time > 0 else 0
-            logger.info(f"Vision stream completed: {total_tokens} tokens in {elapsed_time:.2f}s ({tps:.2f} tokens/sec)")
+            
+            # Update metrics
+            metrics = {
+                "token_count": total_tokens,
+                "word_count": total_words,
+                "char_count": total_chars,
+                "elapsed_time": elapsed_time,
+                "tps": tps
+            }
+            self._update_metrics("vision_stream", metrics)
             
         except Exception as e:
+            self.metrics["error_count"] += 1
             logger.error(f"Error in vision stream generation for request {request_id}: {str(e)}")
             raise HTTPException(
                 status_code=500,
@@ -251,24 +281,162 @@ class MLXHandler:
             
             # Calculate and log TPS statistics
             elapsed_time = time.time() - start_time
-            token_count = self._estimate_tokens(response)
-            tps = token_count / elapsed_time if elapsed_time > 0 else 0
-            logger.info(f"Vision response completed: {token_count} tokens in {elapsed_time:.2f}s ({tps:.2f} tokens/sec)")
+            metrics = self._estimate_tokens(response)
+            tps = metrics["estimated_tokens"] / elapsed_time if elapsed_time > 0 else 0
+            
+            # Update metrics
+            metrics.update({
+                "elapsed_time": elapsed_time,
+                "tps": tps
+            })
+            self._update_metrics("vision", metrics)
             
             return response
             
         except asyncio.QueueFull:
+            self.metrics["error_count"] += 1
             raise HTTPException(
                 status_code=429,
                 detail="Too many requests. Service is at capacity."
             )
         except Exception as e:
+            self.metrics["error_count"] += 1
             logger.error(f"Error in vision response generation: {str(e)}")
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to generate vision response: {str(e)}"
             )
+
+    async def generate_text_stream(self, request: ChatCompletionRequest):
+        """
+        Generate a streaming response for text-only chat completion requests.
+        
+        Args:
+            request: ChatCompletionRequest object containing the messages.
+        
+        Returns:
+            AsyncGenerator: Yields response chunks.
+        """
+        chat_messages, model_params = await self._prepare_text_request(request)
+        
+        # Create a unique request ID
+        request_id = f"text-{uuid.uuid4()}"
+        
+        try:
+            # Start timing
+            start_time = time.time()
+            total_tokens = 0
+            total_words = 0
+            total_chars = 0
             
+            # Get the generator from the model
+            response_generator = self.model(
+                messages=chat_messages,
+                stream=True,
+                **model_params
+            )
+            
+            # Process and yield each chunk asynchronously
+            for chunk in response_generator:
+                if chunk:
+                    text_chunk = ""
+                    if hasattr(chunk, 'text'):
+                        text_chunk = chunk.text
+                    elif isinstance(chunk, str):
+                        text_chunk = chunk
+                    else:
+                        text_chunk = str(chunk)
+                    
+                    # Update token count
+                    if text_chunk:
+                        chunk_metrics = self._estimate_tokens(text_chunk)
+                        total_tokens += chunk_metrics["estimated_tokens"]
+                        total_words += chunk_metrics["word_count"]
+                        total_chars += chunk_metrics["char_count"]
+                    
+                    yield text_chunk
+            
+            # Calculate and log TPS statistics
+            elapsed_time = time.time() - start_time
+            tps = total_tokens / elapsed_time if elapsed_time > 0 else 0
+            
+            # Update metrics
+            metrics = {
+                "token_count": total_tokens,
+                "word_count": total_words,
+                "char_count": total_chars,
+                "elapsed_time": elapsed_time,
+                "tps": tps
+            }
+            self._update_metrics("text_stream", metrics)
+            
+        except Exception as e:
+            self.metrics["error_count"] += 1
+            logger.error(f"Error in text stream generation for request {request_id}: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to generate text stream: {str(e)}"
+            )
+
+    async def generate_text_response(self, request: ChatCompletionRequest):
+        """
+        Generate a complete response for text-only chat completion requests.
+        Uses the request queue for handling concurrent requests.
+        
+        Args:
+            request: ChatCompletionRequest object containing the messages.
+        
+        Returns:
+            str: Complete response.
+        """
+        try:
+            # Create a unique request ID
+            request_id = f"text-{uuid.uuid4()}"
+            
+            # Prepare the text request
+            chat_messages, model_params = await self._prepare_text_request(request)
+            
+            # Create a request data object
+            request_data = {
+                "messages": chat_messages,
+                "stream": False,
+                **model_params
+            }
+            
+            # Start timing
+            start_time = time.time()
+            
+            # Submit to the vision queue (reusing the same queue for text requests)
+            response = await self.vision_queue.submit(request_id, request_data)
+            
+            # Calculate and log TPS statistics
+            elapsed_time = time.time() - start_time
+            metrics = self._estimate_tokens(response)
+            tps = metrics["estimated_tokens"] / elapsed_time if elapsed_time > 0 else 0
+            
+            # Update metrics
+            metrics.update({
+                "elapsed_time": elapsed_time,
+                "tps": tps
+            })
+            self._update_metrics("text", metrics)
+            
+            return response
+            
+        except asyncio.QueueFull:
+            self.metrics["error_count"] += 1
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests. Service is at capacity."
+            )
+        except Exception as e:
+            self.metrics["error_count"] += 1
+            logger.error(f"Error in text response generation: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to generate text response: {str(e)}"
+            )
+
     async def _process_vision_request(self, request_data: Dict[str, Any]) -> str:
         """
         Process a vision request. This is the worker function for the vision queue.
@@ -319,138 +487,108 @@ class MLXHandler:
             logger.error(f"Error processing vision request: {str(e)}")
             raise
     
-    def _estimate_tokens(self, text: str) -> int:
+    def _estimate_tokens(self, text: str) -> Dict[str, int]:
         """
-        Estimate the number of tokens in a text.
-        This is a rough approximation - actual token count depends on the tokenizer.
+        Estimate the number of tokens in a text with more detailed metrics.
         
         Args:
             text (str): The text to estimate tokens for.
             
         Returns:
-            int: Estimated token count.
+            Dict[str, int]: Dictionary containing token estimates and metrics.
         """
-        # A common rough approximation is words/1.3 for English text
-        words = len(text.split())
-        return int(words / 1.3)
-    
-    async def get_queue_stats(self) -> Dict[str, Any]:
-        """
-        Get statistics from the request queue.
+        # Split into words and count
+        words = text.split()
+        word_count = len(words)
         
-        Returns:
-            Dict with queue statistics.
-        """
+        # Count characters
+        char_count = len(text)
+        
+        # Estimate tokens using different methods
+        # Method 1: words/1.3 (common approximation)
+        tokens_by_words = int(word_count / 1.3)
+        
+        # Method 2: chars/4 (another common approximation)
+        tokens_by_chars = int(char_count / 4)
+        
+        # Use the average of both methods for better accuracy
+        estimated_tokens = (tokens_by_words + tokens_by_chars) // 2
+        
         return {
-            "request_queue": self.vision_queue.get_queue_stats()
+            "estimated_tokens": estimated_tokens,
+            "word_count": word_count,
+            "char_count": char_count,
+            "tokens_by_words": tokens_by_words,
+            "tokens_by_chars": tokens_by_chars
         }
 
-    async def generate_text_stream(self, request: ChatCompletionRequest):
+    def _update_metrics(self, request_type: str, metrics: Dict[str, Any]):
         """
-        Generate a streaming response for text-only chat completion requests.
+        Update the global metrics with new request statistics.
         
         Args:
-            request: ChatCompletionRequest object containing the messages.
-        
-        Returns:
-            AsyncGenerator: Yields response chunks.
+            request_type (str): Type of request (vision/text, streaming/non-streaming)
+            metrics (Dict[str, Any]): Request-specific metrics
         """
-        chat_messages, model_params = await self._prepare_text_request(request)
+        self.metrics["total_requests"] += 1
+        self.metrics["request_types"][request_type] += 1
         
-        # Create a unique request ID
-        request_id = f"text-{uuid.uuid4()}"
+        # Update token and time metrics
+        self.metrics["total_tokens"] += metrics["token_count"]
+        self.metrics["total_time"] += metrics["elapsed_time"]
         
-        try:
-            # Start timing
-            start_time = time.time()
-            total_tokens = 0
-            
-            # Get the generator from the model
-            response_generator = self.model(
-                messages=chat_messages,
-                stream=True,
-                **model_params
-            )
-            
-            # Process and yield each chunk asynchronously
-            for chunk in response_generator:
-                if chunk:
-                    text_chunk = ""
-                    if hasattr(chunk, 'text'):
-                        text_chunk = chunk.text
-                    elif isinstance(chunk, str):
-                        text_chunk = chunk
-                    else:
-                        text_chunk = str(chunk)
-                    
-                    # Update token count
-                    if text_chunk:
-                        total_tokens += self._estimate_tokens(text_chunk)
-                    
-                    yield text_chunk
-            
-            # Calculate and log TPS statistics
-            elapsed_time = time.time() - start_time
-            tps = total_tokens / elapsed_time if elapsed_time > 0 else 0
-            logger.info(f"Text stream completed: {total_tokens} tokens in {elapsed_time:.2f}s ({tps:.2f} tokens/sec)")
-            
-        except Exception as e:
-            logger.error(f"Error in text stream generation for request {request_id}: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to generate text stream: {str(e)}"
-            )
+        # Update TPS metrics
+        current_tps = metrics["tps"]
+        self.metrics["avg_tps"] = (self.metrics["avg_tps"] * (self.metrics["total_requests"] - 1) + current_tps) / self.metrics["total_requests"]
+        self.metrics["max_tps"] = max(self.metrics["max_tps"], current_tps)
+        self.metrics["min_tps"] = min(self.metrics["min_tps"], current_tps)
+        
+        # Add to request history (keep last 100 requests)
+        self.metrics["request_history"].append({
+            "timestamp": time.time(),
+            "request_type": request_type,
+            **metrics
+        })
+        if len(self.metrics["request_history"]) > 100:
+            self.metrics["request_history"].pop(0)
+        
+        # Log detailed metrics
+        logger.info(
+            f"Request completed: {request_type}\n"
+            f"Tokens: {metrics['token_count']} (words: {metrics['word_count']}, chars: {metrics['char_count']})\n"
+            f"Time: {metrics['elapsed_time']:.2f}s\n"
+            f"TPS: {metrics['tps']:.2f}\n"
+            f"Avg TPS: {self.metrics['avg_tps']:.2f}"
+        )
 
-    async def generate_text_response(self, request: ChatCompletionRequest):
+    async def get_queue_stats(self) -> Dict[str, Any]:
         """
-        Generate a complete response for text-only chat completion requests.
-        Uses the request queue for handling concurrent requests.
-        
-        Args:
-            request: ChatCompletionRequest object containing the messages.
+        Get statistics from the request queue and performance metrics.
         
         Returns:
-            str: Complete response.
+            Dict with queue and performance statistics.
         """
-        try:
-            # Create a unique request ID
-            request_id = f"text-{uuid.uuid4()}"
-            
-            # Prepare the text request
-            chat_messages, model_params = await self._prepare_text_request(request)
-            
-            # Create a request data object
-            request_data = {
-                "messages": chat_messages,
-                "stream": False,
-                **model_params
+        queue_stats = self.vision_queue.get_queue_stats()
+        
+        # Calculate additional metrics
+        metrics_summary = {
+            "total_requests": self.metrics["total_requests"],
+            "total_tokens": self.metrics["total_tokens"],
+            "total_time": self.metrics["total_time"],
+            "request_types": dict(self.metrics["request_types"]),
+            "error_count": self.metrics["error_count"],
+            "performance": {
+                "avg_tps": self.metrics["avg_tps"],
+                "max_tps": self.metrics["max_tps"],
+                "min_tps": self.metrics["min_tps"],
+                "recent_requests": len(self.metrics["request_history"])
             }
-            
-            # Start timing
-            start_time = time.time()
-            
-            # Submit to the vision queue (reusing the same queue for text requests)
-            response = await self.vision_queue.submit(request_id, request_data)
-            
-            # Calculate and log TPS statistics
-            elapsed_time = time.time() - start_time
-            token_count = self._estimate_tokens(response)
-            tps = token_count / elapsed_time if elapsed_time > 0 else 0
-            logger.info(f"Text response completed: {token_count} tokens in {elapsed_time:.2f}s ({tps:.2f} tokens/sec)")
-            
-            return response
-            
-        except asyncio.QueueFull:
-            raise HTTPException(
-                status_code=429,
-                detail="Too many requests. Service is at capacity."
-            )
-        except Exception as e:
-            logger.error(f"Error in text response generation: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to generate text response: {str(e)}"
-            )
+        }
+        
+        return {
+            "queue_stats": queue_stats,
+            "metrics": metrics_summary
+        }
 
     async def _prepare_text_request(self, request: ChatCompletionRequest) -> Tuple[List[Dict[str, str]], Dict[str, Any]]:
         """

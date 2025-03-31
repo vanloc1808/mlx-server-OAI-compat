@@ -43,7 +43,6 @@ To start the proxy server, activate the virtual environment and run the main app
 source oai-compat-server/bin/activate
 python -m app.main \
   --model-path <path-to-model> \
-  --model-type mlx_vlm \
   --max-concurrency 1 \
   --queue-timeout 300 \
   --queue-size 100
@@ -51,13 +50,20 @@ python -m app.main \
 
 Parameters:
 - `--model-path`: Path to the model directory
-- `--model-type`: Type of model to use (currently only `mlx_vlm` is supported)
 - `--max-concurrency`: Maximum number of concurrent requests (default: 1)
 - `--queue-timeout`: Request timeout in seconds (default: 300)
 - `--queue-size`: Maximum queue size for pending requests (default: 100)
 - `--port`: Port to run the server on (default: 8000)
 - `--host`: Host to run the server on (default: 0.0.0.0)
 
+Example:
+```bash
+python -m app.main \
+  --model-path mlx-community/gemma-3-4b-it-4bit \
+  --max-concurrency 1 \
+  --queue-timeout 300 \
+  --queue-size 100
+```
 ## Request Queue System
 
 The server implements a robust request queue system to prevent overloading the MLX model and ensure fair processing of requests.
@@ -126,7 +132,116 @@ When a request times out, an exception is raised in the client's response.
 - Queue statistics are updated in real-time
 - Currently, only vision requests are supported; text-only requests are rejected with a 400 status code
 
+## Performance Monitoring
+
+The server includes comprehensive performance monitoring and benchmarking capabilities to help track and optimize model performance.
+
+### Key Features
+
+- **Token Per Second (TPS) Tracking**: Real-time monitoring of model generation speed
+- **Detailed Request Metrics**: Per-request statistics including token counts, word counts, and processing time
+- **Historical Performance Data**: Maintains history of recent requests for trend analysis
+- **Request Type Breakdown**: Separate metrics for different types of requests (vision/text, streaming/non-streaming)
+
+### Metrics Endpoint
+
+The `/v1/queue/stats` endpoint now provides enhanced performance metrics:
+
+```bash
+curl http://localhost:8000/v1/queue/stats
+```
+
+Response example:
+
+```json
+{
+  "status": "ok",
+  "queue_stats": {
+    "running": true,
+    "queue_size": 3,
+    "max_queue_size": 100,
+    "active_requests": 5,
+    "max_concurrency": 2
+  },
+  "metrics": {
+    "total_requests": 100,
+    "total_tokens": 5000,
+    "total_time": 50.5,
+    "request_types": {
+      "vision": 40,
+      "vision_stream": 20,
+      "text": 30,
+      "text_stream": 10
+    },
+    "error_count": 2,
+    "performance": {
+      "avg_tps": 99.0,
+      "max_tps": 150.0,
+      "min_tps": 50.0,
+      "recent_requests": 100
+    }
+  }
+}
+```
+
+### Metrics Details
+
+The performance metrics include:
+
+- **Request Statistics**:
+  - Total number of requests processed
+  - Breakdown by request type (vision/text, streaming/non-streaming)
+  - Total tokens generated
+  - Total processing time
+
+- **Performance Metrics**:
+  - Average Tokens Per Second (TPS)
+  - Maximum TPS observed
+  - Minimum TPS observed
+  - Number of recent requests in history
+
+- **Error Tracking**:
+  - Total number of errors encountered
+  - Error rate calculation
+
+### Token Estimation
+
+The server uses sophisticated token estimation methods:
+
+- Word-based estimation (words/1.3)
+- Character-based estimation (chars/4)
+- Combined average for improved accuracy
+
+This provides more accurate performance metrics for benchmarking and optimization.
+
+### Logging
+
+Detailed performance logs are available in the server logs:
+
+```
+Request completed: vision_stream
+Tokens: 150 (words: 75, chars: 450)
+Time: 1.50s
+TPS: 100.00
+Avg TPS: 95.50
+```
+
 ## API Usage
+
+### Text Request Example
+
+```bash
+curl localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is the capital of France?"
+      }
+    ]
+  }'
+```
 
 ### Vision Request Example
 You can make vision requests to analyze images using the `/v1/chat/completions` endpoint. Here's an example:
@@ -135,7 +250,6 @@ You can make vision requests to analyze images using the `/v1/chat/completions` 
 curl localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "mlx-community/Qwen2-VL-2B-Instruct-4bit",
     "messages": [
       {
         "role": "user",
@@ -174,7 +288,6 @@ The server will return responses in OpenAI-compatible format:
   "id": "chatcmpl-1234567890",
   "object": "chat.completion",
   "created": 1234567890,
-  "model": "mlx-community/Qwen2-VL-2B-Instruct-4bit",
   "choices": [
     {
       "index": 0,
@@ -221,7 +334,6 @@ The API supports multi-turn conversations with images. You can include previous 
 
 ```json
 {
-  "model": "mlx-community/Qwen2-VL-2B-Instruct-4bit",
   "messages": [
     {
       "role": "system",
@@ -259,12 +371,11 @@ The API supports multi-turn conversations with images. You can include previous 
 For multimodal models that require specific image token formatting, the server handles this automatically. The implementation uses the following approach:
 
 ```python
-def handle_list_with_image(prompt, role, num_images, skip_image_token=False, image_first=False):
-    """Format messages with proper image tokens"""
+def handle_list_with_image(prompt, role, num_images, skip_image_token=False):
+    """Format message with proper image token handling"""
     content = [{"type": "text", "text": prompt}]
     if role == "user" and not skip_image_token:
-        image_tokens = [{"type": "image"}] * num_images
-        content = image_tokens + content if image_first else content + image_tokens
+        content.extend([{"type": "image"}] * num_images)
     return {"role": role, "content": content}
 ```
 
