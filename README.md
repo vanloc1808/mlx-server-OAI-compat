@@ -1,13 +1,13 @@
-# proxy-OAI-compat
+# mlx-server-OAI-compat
 
 ## Description
-This repository hosts a high-performance proxy server designed to be fully compatible with the OAI-compat protocol. Developed using Python and powered by the FastAPI framework, it provides an efficient, scalable, and user-friendly solution for handling vision-based inference requests.
+This repository hosts a high-performance proxy server designed to be fully compatible with the OAI-compat protocol, specifically tailored for MLX models. Developed using Python and powered by the FastAPI framework, it provides an efficient, scalable, and user-friendly solution for handling MLX-based vision and language model inference requests.
 
-> **Note:** This project currently supports **MacOS with M-series chips** only.
+> **Note:** This project currently supports **MacOS with M-series chips** only as it specifically leverages MLX, Apple's framework optimized for Apple Silicon.
 
 ## Installation
 
-Follow these steps to set up the proxy server:
+Follow these steps to set up the MLX-powered server:
 
 ### Native Python Recommendation
 We recommend using a native Python version (supporting ARM architecture). The development environment for this project uses Python `3.11`.
@@ -38,18 +38,18 @@ python -c "import platform; print(platform.processor())"
 If the output is `i386` (on an M-series machine), you are using a non-native Python. Switch to a native Python version. A good approach is to use [Conda](https://stackoverflow.com/questions/65415996/how-to-specify-the-architecture-or-platform-for-a-new-conda-environment-apple).
 
 ## Usage
-To start the proxy server, activate the virtual environment and run the main application file:
+To start the MLX server, activate the virtual environment and run the main application file:
 ```bash
 source oai-compat-server/bin/activate
 python -m app.main \
-  --model-path <path-to-model> \
+  --model-path <path-to-mlx-model> \
   --max-concurrency 1 \
   --queue-timeout 300 \
   --queue-size 100
 ```
 
 Parameters:
-- `--model-path`: Path to the model directory (only supports mlx models for now)
+- `--model-path`: Path to the MLX model directory (supports mlx models only)
 - `--max-concurrency`: Maximum number of concurrent requests (default: 1)
 - `--queue-timeout`: Request timeout in seconds (default: 300)
 - `--queue-size`: Maximum queue size for pending requests (default: 100)
@@ -70,7 +70,7 @@ The server implements a robust request queue system to prevent overloading the M
 
 ### Key Features
 
-- **Concurrency control**: Limits the number of simultaneous model inferences
+- **Concurrency control**: Limits the number of simultaneous MLX model inferences
 - **Queuing**: Handles pending requests in a fair, first-come-first-served manner
 - **Timeout handling**: Automatically fails requests that exceed the configured timeout
 - **Status monitoring**: Provides endpoints to monitor queue status
@@ -85,7 +85,7 @@ The queue system consists of two main components:
    - Handles timeouts and errors
    - Provides statistics about queue status
 
-2. **MLXHandler integration**: The service maintains a queue for vision requests (image + text)
+2. **MLXHandler integration**: The service maintains dedicated queues for efficient processing of MLX model requests (both vision and text)
 
 ### Monitoring
 
@@ -126,19 +126,19 @@ When a request times out, an exception is raised in the client's response.
 
 ### Implementation Notes
 
-- Streaming requests are not queued because they are inherently long-running and would block the queue
-- Non-streaming vision requests are handled through the queue system
+- Streaming requests are handled efficiently to leverage MLX's generation capabilities
+- Both vision and text requests are fully supported through the MLX interface
 - Each request gets a unique ID for tracking and debugging
 - Queue statistics are updated in real-time
-- Currently, only vision requests are supported; text-only requests are rejected with a 400 status code
+- Model loading is optimized for MLX's architecture
 
 ## Performance Monitoring
 
-The server includes comprehensive performance monitoring and benchmarking capabilities to help track and optimize model performance.
+The server includes comprehensive performance monitoring and benchmarking capabilities to help track and optimize MLX model performance.
 
 ### Key Features
 
-- **Token Per Second (TPS) Tracking**: Real-time monitoring of model generation speed
+- **Token Per Second (TPS) Tracking**: Real-time monitoring of MLX model generation speed
 - **Detailed Request Metrics**: Per-request statistics including token counts, word counts, and processing time
 - **Historical Performance Data**: Maintains history of recent requests for trend analysis
 - **Request Type Breakdown**: Separate metrics for different types of requests (vision/text, streaming/non-streaming)
