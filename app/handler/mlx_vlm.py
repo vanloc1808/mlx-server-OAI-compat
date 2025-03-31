@@ -382,8 +382,18 @@ class MLXHandler:
 
         try:
             
-            # Nothing to handle with messages for text-only requests
-            chat_messages = request.messages
+            # Convert Message objects to dictionaries with 'role' and 'content' keys
+            chat_messages = []
+            for message in request.messages:
+                # Only handle simple string content for text-only requests
+                if not isinstance(message.content, str):
+                    logger.warning(f"Non-string content in text request will be skipped: {message.role}")
+                    continue
+                
+                chat_messages.append({
+                    "role": message.role,
+                    "content": message.content
+                })
 
             # Extract model parameters, filtering out None values
             model_params = {
