@@ -287,7 +287,8 @@ class MLXHandler:
             # Update metrics
             metrics.update({
                 "elapsed_time": elapsed_time,
-                "tps": tps
+                "tps": tps,
+                "token_count": metrics["estimated_tokens"]
             })
             self._update_metrics("vision", metrics)
             
@@ -417,7 +418,8 @@ class MLXHandler:
             # Update metrics
             metrics.update({
                 "elapsed_time": elapsed_time,
-                "tps": tps
+                "tps": tps,
+                "token_count": metrics["estimated_tokens"]
             })
             self._update_metrics("text", metrics)
             
@@ -477,7 +479,8 @@ class MLXHandler:
             # Calculate tokens in the response
             # For simple text responses, approximating token count as words/1.3
             if isinstance(response, str):
-                token_count = self._estimate_tokens(response)
+                metrics = self._estimate_tokens(response)
+                token_count = metrics["estimated_tokens"]
                 tps = token_count / elapsed_time if elapsed_time > 0 else 0
                 logger.info(f"Request completed: {token_count} tokens in {elapsed_time:.2f}s ({tps:.2f} tokens/sec)")
             
@@ -533,12 +536,12 @@ class MLXHandler:
         self.metrics["total_requests"] += 1
         self.metrics["request_types"][request_type] += 1
         
-        # Update token and time metrics
-        self.metrics["total_tokens"] += metrics["token_count"]
-        self.metrics["total_time"] += metrics["elapsed_time"]
+        # Update token and time metrics - use get() with defaults for safety
+        self.metrics["total_tokens"] += metrics.get("token_count", metrics.get("estimated_tokens", 0))
+        self.metrics["total_time"] += metrics.get("elapsed_time", 0)
         
         # Update TPS metrics
-        current_tps = metrics["tps"]
+        current_tps = metrics.get("tps", 0)
         self.metrics["avg_tps"] = (self.metrics["avg_tps"] * (self.metrics["total_requests"] - 1) + current_tps) / self.metrics["total_requests"]
         self.metrics["max_tps"] = max(self.metrics["max_tps"], current_tps)
         self.metrics["min_tps"] = min(self.metrics["min_tps"], current_tps)
@@ -552,12 +555,17 @@ class MLXHandler:
         if len(self.metrics["request_history"]) > 100:
             self.metrics["request_history"].pop(0)
         
-        # Log detailed metrics
+        # Log detailed metrics - use get() with defaults for safety
+        token_count = metrics.get("token_count", metrics.get("estimated_tokens", 0))
+        word_count = metrics.get("word_count", 0)
+        char_count = metrics.get("char_count", 0)
+        elapsed_time = metrics.get("elapsed_time", 0)
+        
         logger.info(
             f"Request completed: {request_type}\n"
-            f"Tokens: {metrics['token_count']} (words: {metrics['word_count']}, chars: {metrics['char_count']})\n"
-            f"Time: {metrics['elapsed_time']:.2f}s\n"
-            f"TPS: {metrics['tps']:.2f}\n"
+            f"Tokens: {token_count} (words: {word_count}, chars: {char_count})\n"
+            f"Time: {elapsed_time:.2f}s\n"
+            f"TPS: {current_tps:.2f}\n"
             f"Avg TPS: {self.metrics['avg_tps']:.2f}"
         )
 

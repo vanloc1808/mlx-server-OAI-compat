@@ -49,7 +49,7 @@ python -m app.main \
 ```
 
 Parameters:
-- `--model-path`: Path to the model directory
+- `--model-path`: Path to the model directory (only supports mlx models for now)
 - `--max-concurrency`: Maximum number of concurrent requests (default: 1)
 - `--queue-timeout`: Request timeout in seconds (default: 300)
 - `--queue-size`: Maximum queue size for pending requests (default: 100)
@@ -142,6 +142,7 @@ The server includes comprehensive performance monitoring and benchmarking capabi
 - **Detailed Request Metrics**: Per-request statistics including token counts, word counts, and processing time
 - **Historical Performance Data**: Maintains history of recent requests for trend analysis
 - **Request Type Breakdown**: Separate metrics for different types of requests (vision/text, streaming/non-streaming)
+- **Robust Error Handling**: Fault-tolerant metrics collection with fallbacks for missing data
 
 ### Metrics Endpoint
 
@@ -183,6 +184,21 @@ Response example:
   }
 }
 ```
+
+### Metrics System Design
+
+The performance metrics system is designed with robustness in mind:
+
+1. **Consistent Metrics Keys**: All request handlers use a standardized format for metrics
+2. **Fault Tolerance**: The system uses fallbacks when processing metrics data:
+   ```python
+   # Using get() with defaults for safety
+   self.metrics["total_tokens"] += metrics.get("token_count", metrics.get("estimated_tokens", 0))
+   ```
+3. **Key Normalization**: The system automatically maps between different key formats:
+   - `estimated_tokens` from token estimator
+   - `token_count` for metrics system
+4. **Error Resilience**: The metrics system continues functioning even if one component fails
 
 ### Metrics Details
 
