@@ -5,6 +5,7 @@ import tempfile
 import hashlib
 import logging
 import asyncio
+import time  # Add time import for tracking
 from typing import List, Dict, Any, Optional, Union, Tuple
 from PIL import Image
 from io import BytesIO
@@ -108,7 +109,10 @@ class MLXHandler:
                 data = base64.b64decode(encoded)
                 image = Image.open(BytesIO(data))
             else:
-                response = requests.get(image_url, timeout=10)
+                headers = {
+                    "User-Agent": "proxy-OAI-compat/1.0 (https://github.com/vuonggiahuy/proxy-OAI-compat; your-email@example.com) Python-Requests"
+                }
+                response = requests.get(image_url, headers=headers, timeout=10)
                 response.raise_for_status()
                 image = Image.open(BytesIO(response.content))
 
@@ -172,6 +176,10 @@ class MLXHandler:
         
         # Submit the vision request directly (not through queue for streaming)
         try:
+            # Start timing
+            start_time = time.time()
+            total_tokens = 0
+            
             # Get the generator from the model
             response_generator = self.model(
                 images=image_paths,
@@ -183,12 +191,25 @@ class MLXHandler:
             # Process and yield each chunk asynchronously
             for chunk in response_generator:
                 if chunk:
+                    text_chunk = ""
                     if hasattr(chunk, 'text'):
-                        yield chunk.text
+                        text_chunk = chunk.text
                     elif isinstance(chunk, str):
-                        yield chunk
+                        text_chunk = chunk
                     else:
-                        yield str(chunk)
+                        text_chunk = str(chunk)
+                    
+                    # Update token count
+                    if text_chunk:
+                        total_tokens += self._estimate_tokens(text_chunk)
+                    
+                    yield text_chunk
+            
+            # Calculate and log TPS statistics
+            elapsed_time = time.time() - start_time
+            tps = total_tokens / elapsed_time if elapsed_time > 0 else 0
+            logger.info(f"Vision stream completed: {total_tokens} tokens in {elapsed_time:.2f}s ({tps:.2f} tokens/sec)")
+            
         except Exception as e:
             logger.error(f"Error in vision stream generation for request {request_id}: {str(e)}")
             raise HTTPException(
@@ -222,8 +243,19 @@ class MLXHandler:
                 **model_params
             }
             
+            # Start timing
+            start_time = time.time()
+            
             # Submit to the vision queue and wait for result
-            return await self.vision_queue.submit(request_id, request_data)
+            response = await self.vision_queue.submit(request_id, request_data)
+            
+            # Calculate and log TPS statistics
+            elapsed_time = time.time() - start_time
+            token_count = self._estimate_tokens(response)
+            tps = token_count / elapsed_time if elapsed_time > 0 else 0
+            logger.info(f"Vision response completed: {token_count} tokens in {elapsed_time:.2f}s ({tps:.2f} tokens/sec)")
+            
+            return response
             
         except asyncio.QueueFull:
             raise HTTPException(
@@ -259,6 +291,9 @@ class MLXHandler:
             model_params.pop("messages", None)
             model_params.pop("stream", None)
             
+            # Start timing
+            start_time = time.time()
+            
             # Call the model
             response = self.model(
                 images=images,
@@ -267,11 +302,37 @@ class MLXHandler:
                 **model_params
             )
             
+            # End timing and calculate metrics
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            
+            # Calculate tokens in the response
+            # For simple text responses, approximating token count as words/1.3
+            if isinstance(response, str):
+                token_count = self._estimate_tokens(response)
+                tps = token_count / elapsed_time if elapsed_time > 0 else 0
+                logger.info(f"Request completed: {token_count} tokens in {elapsed_time:.2f}s ({tps:.2f} tokens/sec)")
+            
             return response
             
         except Exception as e:
             logger.error(f"Error processing vision request: {str(e)}")
             raise
+    
+    def _estimate_tokens(self, text: str) -> int:
+        """
+        Estimate the number of tokens in a text.
+        This is a rough approximation - actual token count depends on the tokenizer.
+        
+        Args:
+            text (str): The text to estimate tokens for.
+            
+        Returns:
+            int: Estimated token count.
+        """
+        # A common rough approximation is words/1.3 for English text
+        words = len(text.split())
+        return int(words / 1.3)
     
     async def get_queue_stats(self) -> Dict[str, Any]:
         """
@@ -300,6 +361,10 @@ class MLXHandler:
         request_id = f"text-{uuid.uuid4()}"
         
         try:
+            # Start timing
+            start_time = time.time()
+            total_tokens = 0
+            
             # Get the generator from the model
             response_generator = self.model(
                 messages=chat_messages,
@@ -310,12 +375,25 @@ class MLXHandler:
             # Process and yield each chunk asynchronously
             for chunk in response_generator:
                 if chunk:
+                    text_chunk = ""
                     if hasattr(chunk, 'text'):
-                        yield chunk.text
+                        text_chunk = chunk.text
                     elif isinstance(chunk, str):
-                        yield chunk
+                        text_chunk = chunk
                     else:
-                        yield str(chunk)
+                        text_chunk = str(chunk)
+                    
+                    # Update token count
+                    if text_chunk:
+                        total_tokens += self._estimate_tokens(text_chunk)
+                    
+                    yield text_chunk
+            
+            # Calculate and log TPS statistics
+            elapsed_time = time.time() - start_time
+            tps = total_tokens / elapsed_time if elapsed_time > 0 else 0
+            logger.info(f"Text stream completed: {total_tokens} tokens in {elapsed_time:.2f}s ({tps:.2f} tokens/sec)")
+            
         except Exception as e:
             logger.error(f"Error in text stream generation for request {request_id}: {str(e)}")
             raise HTTPException(
@@ -348,8 +426,19 @@ class MLXHandler:
                 **model_params
             }
             
+            # Start timing
+            start_time = time.time()
+            
             # Submit to the vision queue (reusing the same queue for text requests)
-            return await self.vision_queue.submit(request_id, request_data)
+            response = await self.vision_queue.submit(request_id, request_data)
+            
+            # Calculate and log TPS statistics
+            elapsed_time = time.time() - start_time
+            token_count = self._estimate_tokens(response)
+            tps = token_count / elapsed_time if elapsed_time > 0 else 0
+            logger.info(f"Text response completed: {token_count} tokens in {elapsed_time:.2f}s ({tps:.2f} tokens/sec)")
+            
+            return response
             
         except asyncio.QueueFull:
             raise HTTPException(
