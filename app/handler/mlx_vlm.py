@@ -307,124 +307,117 @@ class MLXHandler:
         chat_messages = []
         image_urls = []
 
-        try:
-            # Process each message in the request
-            for message in request.messages:
-                # Handle system messages
-                if message.role == "system":
-                    chat_messages.append({
-                        "role": "system",
-                        "content": message.content
-                    })
-                    continue
+        def format_message(role, content):
+            """Simple helper to format message with consistent structure"""
+            return {"role": role, "content": content}
 
-                # Handle assistant messages
-                if message.role == "assistant":
-                    chat_messages.append({
-                        "role": "assistant",
-                        "content": message.content
-                    })
+        def handle_list_with_image(prompt, role, num_images, skip_image_token=False):
+            """Format message with proper image token handling"""
+            content = [{"type": "text", "text": prompt}]
+            if role == "user" and not skip_image_token:
+                content.extend([{"type": "image"}] * num_images)
+            return {"role": role, "content": content}
+
+        try:
+            for i, message in enumerate(request.messages):
+                is_last_message = i == len(request.messages) - 1
+                
+                # Handle system and assistant messages (simple text content)
+                if message.role in ["system", "assistant"]:
+                    chat_messages.append(format_message(message.role, message.content))
                     continue
 
                 # Handle user messages
                 if message.role == "user":
+                    # Simple string content
                     if isinstance(message.content, str):
-                        # Simple text message
-                        chat_messages.append({
-                            "role": "user",
-                            "content": message.content
-                        })
+                        chat_messages.append(format_message("user", message.content))
                         continue
                         
+                    # Complex content (text + images)
                     elif isinstance(message.content, list):
-                        # Message containing both text and images
                         texts = []
                         images = []
                         
+                        # Process each content item
                         for item in message.content:
                             if item.type == "text":
-                                if not item.text or not item.text.strip():
-                                    continue
-                                texts.append(item.text.strip())
+                                text = item.text.strip() if item.text else ""
+                                if text:
+                                    texts.append(text)
                             elif item.type == "image_url":
                                 url = item.image_url.url
                                 if not url:
-                                    raise HTTPException(
-                                        status_code=400,
-                                        detail="Empty image URL provided"
-                                    )
+                                    raise HTTPException(status_code=400, detail="Empty image URL provided")
+                                    
+                                # Validate base64 images
                                 if url.startswith("data:"):
-                                    # Validate base64 image format
                                     try:
                                         header, encoded = url.split(",", 1)
                                         if not header.startswith("data:image/"):
                                             raise ValueError("Invalid image format")
                                         base64.b64decode(encoded)
                                     except Exception as e:
-                                        raise HTTPException(
-                                            status_code=400,
-                                            detail=f"Invalid base64 image: {str(e)}"
-                                        )
+                                        raise HTTPException(status_code=400, detail=f"Invalid base64 image: {str(e)}")
+                                
                                 images.append(url)
                             else:
-                                raise HTTPException(
-                                    status_code=400,
-                                    detail=f"Unsupported content type: {item.type}"
-                                )
+                                raise HTTPException(status_code=400, detail=f"Unsupported content type: {item.type}")
                         
-                        # Add text content if present
-                        if texts:
-                            chat_messages.append({
-                                "role": "user",
-                                "content": " ".join(texts)
-                            })
+                        # Validate constraints
+                        if len(images) > 4:
+                            raise HTTPException(status_code=400, detail="Too many images in a single message (max: 4)")
+                            
+                        if not texts:
+                            raise HTTPException(status_code=400, detail="No text content provided")
                         
-                        # Collect image URLs
+                        # Add collected images to global list
                         if images:
-                            # Check image count limit (OpenAI typically allows 1-4 images)
-                            if len(images) > 4:
-                                raise HTTPException(
-                                    status_code=400,
-                                    detail="Too many images in a single message"
-                                )
                             image_urls.extend(images)
-                    else:
-                        raise HTTPException(
-                            status_code=400,
-                            detail="Invalid message content format"
+                        
+                        # Join text segments
+                        prompt = " ".join(texts)
+                        
+                        # Format appropriately based on position in message sequence
+                        skip_image_token = is_last_message
+                        formatted_message = handle_list_with_image(
+                            prompt=prompt,
+                            role="user",
+                            num_images=len(images),
+                            skip_image_token=skip_image_token
                         )
+                        chat_messages.append(formatted_message)
+                    else:
+                        raise HTTPException(status_code=400, detail="Invalid message content format")
 
-            # Process image URLs to get local file paths
+            # Process images and prepare model parameters
             image_paths = await self.process_image_urls(image_urls)
 
-            # Prepare model parameters, excluding None values
+            # Extract model parameters, filtering out None values
             model_params = {
-                "max_tokens": request.max_tokens,
-                "temperature": request.temperature,
-                "top_p": request.top_p,
-                "frequency_penalty": request.frequency_penalty,
-                "presence_penalty": request.presence_penalty,
-                "stop": request.stop,
-                "n": request.n,
-                "seed": request.seed
+                k: v for k, v in {
+                    "max_tokens": request.max_tokens,
+                    "temperature": request.temperature,
+                    "top_p": request.top_p,
+                    "frequency_penalty": request.frequency_penalty,
+                    "presence_penalty": request.presence_penalty,
+                    "stop": request.stop,
+                    "n": request.n,
+                    "seed": request.seed
+                }.items() if v is not None
             }
-            model_params = {k: v for k, v in model_params.items() if v is not None}
 
-            # Handle response format if specified
-            if request.response_format:
-                if request.response_format.get("type") == "json_object":
-                    # Add JSON mode parameters if needed
-                    model_params["response_format"] = "json"
+            # Handle response format
+            if request.response_format and request.response_format.get("type") == "json_object":
+                model_params["response_format"] = "json"
 
-            # Handle tool calls if specified
+            # Handle tools and tool choice
             if request.tools:
                 model_params["tools"] = request.tools
-                
-                # Handle tool choice
                 if request.tool_choice:
                     model_params["tool_choice"] = request.tool_choice
 
-            # Log processed data for debugging
+            # Log processed data
             logger.debug(f"Processed chat messages: {chat_messages}")
             logger.debug(f"Processed image paths: {image_paths}")
             logger.debug(f"Model parameters: {model_params}")
@@ -435,7 +428,4 @@ class MLXHandler:
             raise
         except Exception as e:
             logger.error(f"Failed to prepare vision request: {str(e)}")
-            raise HTTPException(
-                status_code=400,
-                detail=f"Failed to process request: {str(e)}"
-            )
+            raise HTTPException(status_code=400, detail=f"Failed to process request: {str(e)}")
