@@ -428,4 +428,22 @@ If you encounter any issues or have questions, please:
 Stay tuned for updates and enhancements!
 
 ## Acknowledgments
-Special thanks to the contributors and the open-source community for their support and inspiration.
+
+We extend our heartfelt gratitude to the following individuals and organizations whose contributions have been instrumental in making this project possible:
+
+### Core Technologies
+- [MLX team](https://github.com/ml-explore/mlx) for developing the groundbreaking MLX framework, which provides the foundation for efficient machine learning on Apple Silicon
+- [mlx-vlm](https://github.com/Blaizzy/mlx-vlm/tree/main) for pioneering multimodal model support within the MLX ecosystem
+- [mlx-community](https://huggingface.co/mlx-community) for curating and maintaining a diverse collection of high-quality MLX models
+
+### Open Source Community
+We deeply appreciate the broader open-source community for their invaluable contributions. Your dedication to:
+- Innovation in machine learning and AI
+- Collaborative development practices
+- Knowledge sharing and documentation
+- Continuous improvement of tools and frameworks
+
+Your collective efforts continue to drive progress and make projects like this possible. We are proud to be part of this vibrant ecosystem.
+
+### Special Thanks
+A special acknowledgment to all contributors, users, and supporters who have helped shape this project through their feedback, bug reports, and suggestions. Your engagement helps make this project better for everyone.
