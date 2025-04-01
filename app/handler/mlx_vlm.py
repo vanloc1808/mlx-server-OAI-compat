@@ -6,7 +6,6 @@ import hashlib
 import logging
 import asyncio
 import time
-import json
 from typing import List, Dict, Any, Optional, Union, Tuple
 from PIL import Image
 from io import BytesIO
@@ -56,7 +55,7 @@ class MLXHandler:
             "error_count": 0,
             "avg_tps": 0,
             "max_tps": 0,
-            "min_tps": float('inf'),
+            "min_tps": 0,
             "request_history": []
         }
         
@@ -544,7 +543,8 @@ class MLXHandler:
         current_tps = metrics.get("tps", 0)
         self.metrics["avg_tps"] = (self.metrics["avg_tps"] * (self.metrics["total_requests"] - 1) + current_tps) / self.metrics["total_requests"]
         self.metrics["max_tps"] = max(self.metrics["max_tps"], current_tps)
-        self.metrics["min_tps"] = min(self.metrics["min_tps"], current_tps)
+        if self.metrics["total_requests"] == 1 or current_tps < self.metrics["min_tps"]:
+            self.metrics["min_tps"] = current_tps
         
         # Add to request history (keep last 100 requests)
         self.metrics["request_history"].append({
