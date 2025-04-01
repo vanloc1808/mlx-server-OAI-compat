@@ -6,7 +6,7 @@ from app.handler.schema import (
 from app.models.mlx_vlm import MLX_VLM
 
 
-__version__ = "2.0.1"
+__version__ = "1.0.1"
 
 __all__ = [
     "MLXHandler",
