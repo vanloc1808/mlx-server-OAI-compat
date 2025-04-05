@@ -11,8 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import MLXHandler
-from app.endpoints.routers import router
-from app.handler.queue import RequestQueue
+from app.api.endpoints import router
 
 # Configure logging
 logging.basicConfig(
@@ -40,18 +39,8 @@ async def lifespan(app: FastAPI):
             model_path=args.model_path,
             max_concurrency=args.max_concurrency
         )
-        # Initialize request queue with timeout and size
-        await handler.vision_queue.stop()
-        
-        # Re-create queue with new parameters
-        handler.vision_queue = RequestQueue(
-            max_concurrency=args.max_concurrency,
-            timeout=args.queue_timeout,
-            queue_size=args.queue_size
-        )
-        
         # Initialize queue
-        await handler.initialize_queues()
+        await handler.initialize()
         logger.info("MLX handler initialized successfully")
         app.state.handler = handler
     except Exception as e:

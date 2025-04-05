@@ -5,7 +5,7 @@ import time
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from app.handler.schema import ChatCompletionRequest
+from app.schemas.openai import ChatCompletionRequest
 
 router = APIRouter()
 

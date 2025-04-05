@@ -1,22 +1,24 @@
-import os
-import requests
+import asyncio
 import base64
-import tempfile
 import hashlib
 import logging
-import asyncio
+import os
+import tempfile
 import time
-from typing import List, Dict, Any, Optional, Union, Tuple
-from PIL import Image
-from io import BytesIO
-from functools import lru_cache
-from concurrent.futures import ThreadPoolExecutor
-from app.handler.schema import ChatCompletionRequest
-from app.models.mlx_vlm import MLX_VLM
-from fastapi import HTTPException
-from app.handler.queue import RequestQueue
 import uuid
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
+from io import BytesIO
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+import requests
+from fastapi import HTTPException
+from PIL import Image
+
+from app.core.queue import RequestQueue
+from app.models.mlx_vlm import MLX_VLM
+from app.schemas.openai import ChatCompletionRequest
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -60,11 +62,23 @@ class MLXHandler:
         }
         
         logger.info(f"Initialized MLXHandler with model path: {model_path}")
-        
-    async def initialize_queues(self):
-        """Initialize and start the request queue."""
+    
+    async def initialize(self, queue_config: Optional[Dict[str, Any]] = None):
+        """Initialize the handler and start the request queue."""
+        if not queue_config:
+            queue_config = {
+                "max_concurrency": 1,
+                "timeout": 300,
+                "queue_size": 100
+            }
+        self.vision_queue = RequestQueue(
+            max_concurrency=queue_config.get("max_concurrency"),
+            timeout=queue_config.get("timeout"),
+            queue_size=queue_config.get("queue_size")
+        )
         await self.vision_queue.start(self._process_vision_request)
-        logger.info("Started request queue for vision and text processing")
+        logger.info("Initialized MLXHandler and started request queue")
+
 
     def __del__(self):
         """Cleanup resources on deletion."""
