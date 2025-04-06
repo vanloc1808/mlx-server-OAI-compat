@@ -79,114 +79,6 @@ class MLXHandler:
         await self.vision_queue.start(self._process_vision_request)
         logger.info("Initialized MLXHandler and started request queue")
 
-
-    def __del__(self):
-        """Cleanup resources on deletion."""
-        self.executor.shutdown(wait=True)
-        try:
-            # Clean up temp directory
-            for file in os.listdir(self.temp_dir):
-                os.remove(os.path.join(self.temp_dir, file))
-            os.rmdir(self.temp_dir)
-        except Exception as e:
-            logger.warning(f"Failed to clean up temp directory: {str(e)}")
-
-    @lru_cache(maxsize=100)
-    def _get_image_hash(self, image_url: str) -> str:
-        """
-        Generate a hash for an image URL or base64 string.
-        
-        Args:
-            image_url (str): Image URL or base64-encoded string.
-        
-        Returns:
-            str: Hash of the image content.
-        """
-        if image_url.startswith("data:"):
-            _, encoded = image_url.split(",", 1)
-            data = base64.b64decode(encoded)
-        else:
-            response = requests.get(image_url, timeout=10)
-            response.raise_for_status()
-            data = response.content
-        return hashlib.md5(data).hexdigest()
-
-    def _process_single_image(self, image_url: str) -> str:
-        """
-        Process a single image URL or base64 string.
-        
-        Args:
-            image_url (str): Image URL or base64-encoded string.
-        
-        Returns:
-            str: Path to the saved image file.
-        
-        Raises:
-            ValueError: If image processing fails.
-        """
-        try:
-            image_hash = self._get_image_hash(image_url)
-            cached_path = os.path.join(self.temp_dir, f"{image_hash}.jpg")
-            
-            if os.path.exists(cached_path):
-                logger.debug(f"Using cached image: {cached_path}")
-                return cached_path
-
-            if image_url.startswith("data:"):
-                header, encoded = image_url.split(",", 1)
-                data = base64.b64decode(encoded)
-                image = Image.open(BytesIO(data))
-            else:
-                headers = {
-                    "User-Agent": "proxy-OAI-compat/1.0 (https://github.com/vuonggiahuy/proxy-OAI-compat; your-email@example.com) Python-Requests"
-                }
-                response = requests.get(image_url, headers=headers, timeout=10)
-                response.raise_for_status()
-                image = Image.open(BytesIO(response.content))
-
-            # Optimize image before saving
-            if image.mode in ('RGBA', 'LA'):
-                background = Image.new('RGB', image.size, (255, 255, 255))
-                background.paste(image, mask=image.split()[-1])
-                image = background
-            elif image.mode != 'RGB':
-                image = image.convert('RGB')
-
-            # Save with optimization
-            image.save(cached_path, 'JPEG', quality=85, optimize=True)
-            logger.debug(f"Saved processed image: {cached_path}")
-            return cached_path
-
-        except Exception as e:
-            logger.error(f"Failed to process image: {str(e)}")
-            raise ValueError(f"Failed to process image: {str(e)}")
-
-    async def process_image_url(self, image_url: str) -> str:
-        """
-        Process an image URL or base64 string asynchronously.
-        
-        Args:
-            image_url (str): Image URL or base64-encoded string.
-        
-        Returns:
-            str: Path to the saved image file.
-        """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self.executor, self._process_single_image, image_url)
-
-    async def process_image_urls(self, image_urls: List[str]) -> List[str]:
-        """
-        Process multiple image URLs concurrently.
-        
-        Args:
-            image_urls (List[str]): List of image URLs or base64 strings.
-        
-        Returns:
-            List[str]: List of paths to saved image files.
-        """
-        tasks = [self.process_image_url(url) for url in image_urls]
-        return await asyncio.gather(*tasks)
-
     async def generate_vision_stream(self, request: ChatCompletionRequest):
         """
         Generate a streaming response for vision-based chat completion requests.
@@ -451,6 +343,114 @@ class MLXHandler:
                 status_code=500,
                 detail=f"Failed to generate text response: {str(e)}"
             )
+
+
+    def __del__(self):
+        """Cleanup resources on deletion."""
+        self.executor.shutdown(wait=True)
+        try:
+            # Clean up temp directory
+            for file in os.listdir(self.temp_dir):
+                os.remove(os.path.join(self.temp_dir, file))
+            os.rmdir(self.temp_dir)
+        except Exception as e:
+            logger.warning(f"Failed to clean up temp directory: {str(e)}")
+
+    @lru_cache(maxsize=100)
+    def _get_image_hash(self, image_url: str) -> str:
+        """
+        Generate a hash for an image URL or base64 string.
+        
+        Args:
+            image_url (str): Image URL or base64-encoded string.
+        
+        Returns:
+            str: Hash of the image content.
+        """
+        if image_url.startswith("data:"):
+            _, encoded = image_url.split(",", 1)
+            data = base64.b64decode(encoded)
+        else:
+            response = requests.get(image_url, timeout=10)
+            response.raise_for_status()
+            data = response.content
+        return hashlib.md5(data).hexdigest()
+
+    def _process_single_image(self, image_url: str) -> str:
+        """
+        Process a single image URL or base64 string.
+        
+        Args:
+            image_url (str): Image URL or base64-encoded string.
+        
+        Returns:
+            str: Path to the saved image file.
+        
+        Raises:
+            ValueError: If image processing fails.
+        """
+        try:
+            image_hash = self._get_image_hash(image_url)
+            cached_path = os.path.join(self.temp_dir, f"{image_hash}.jpg")
+            
+            if os.path.exists(cached_path):
+                logger.debug(f"Using cached image: {cached_path}")
+                return cached_path
+
+            if image_url.startswith("data:"):
+                header, encoded = image_url.split(",", 1)
+                data = base64.b64decode(encoded)
+                image = Image.open(BytesIO(data))
+            else:
+                headers = {
+                    "User-Agent": "proxy-OAI-compat/1.0 (https://github.com/vuonggiahuy/proxy-OAI-compat; your-email@example.com) Python-Requests"
+                }
+                response = requests.get(image_url, headers=headers, timeout=10)
+                response.raise_for_status()
+                image = Image.open(BytesIO(response.content))
+
+            # Optimize image before saving
+            if image.mode in ('RGBA', 'LA'):
+                background = Image.new('RGB', image.size, (255, 255, 255))
+                background.paste(image, mask=image.split()[-1])
+                image = background
+            elif image.mode != 'RGB':
+                image = image.convert('RGB')
+
+            # Save with optimization
+            image.save(cached_path, 'JPEG', quality=85, optimize=True)
+            logger.debug(f"Saved processed image: {cached_path}")
+            return cached_path
+
+        except Exception as e:
+            logger.error(f"Failed to process image: {str(e)}")
+            raise ValueError(f"Failed to process image: {str(e)}")
+
+    async def process_image_url(self, image_url: str) -> str:
+        """
+        Process an image URL or base64 string asynchronously.
+        
+        Args:
+            image_url (str): Image URL or base64-encoded string.
+        
+        Returns:
+            str: Path to the saved image file.
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(self.executor, self._process_single_image, image_url)
+
+    async def process_image_urls(self, image_urls: List[str]) -> List[str]:
+        """
+        Process multiple image URLs concurrently.
+        
+        Args:
+            image_urls (List[str]): List of image URLs or base64 strings.
+        
+        Returns:
+            List[str]: List of paths to saved image files.
+        """
+        tasks = [self.process_image_url(url) for url in image_urls]
+        return await asyncio.gather(*tasks)
 
     async def _process_vision_request(self, request_data: Dict[str, Any]) -> str:
         """

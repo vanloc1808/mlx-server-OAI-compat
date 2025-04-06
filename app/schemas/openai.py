@@ -12,6 +12,13 @@ class Config:
     VISION_MODEL = "gpt-4-vision-preview"  # Model used for vision-based requests
     EMBEDDING_MODEL = "text-embedding-ada-002"  # Model used for generating embeddings
 
+class ErrorResponse(BaseModel):
+    object: str = "error"
+    message: str
+    type: str
+    param: Optional[str] = None
+    code: int
+
 class ImageUrl(BaseModel):
     """
     Represents an image URL in a message.

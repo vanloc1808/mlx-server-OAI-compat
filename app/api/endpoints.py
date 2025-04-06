@@ -1,11 +1,14 @@
 import json
 import logging
+import random
 import time
+from http import HTTPStatus
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.schemas.openai import ChatCompletionRequest
+from app.utils.errors import create_error_response
 
 router = APIRouter()
 
@@ -46,178 +49,85 @@ async def queue_stats(raw_request: Request):
 
 @router.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest, raw_request: Request):
-    """
-    Handle chat completion requests.
-    """
+    """Handle chat completion requests."""
     handler = raw_request.app.state.handler
     if handler is None:
-        raise HTTPException(status_code=503, detail="Model handler not initialized")
+        return JSONResponse(content=create_error_response("Model handler not initialized", "service_unavailable", 503), status_code=503)
     
     try:
-        # Process the request to fix message order if needed    
         request.fix_message_order()
-        # Check if this is a vision request
-        is_vision_request = request.is_vision_request()
-        
-        if is_vision_request:
-            logger.info("Processing vision request")
-            
-            if request.stream:
-                # For streaming, get the generator and wrap it in OpenAI format
-                async def stream_wrapper():
-                    try:
-                        async for chunk in handler.generate_vision_stream(request):
-                            response_chunk = {
-                                "id": f"chatcmpl-{int(time.time())}",
-                                "object": "chat.completion.chunk",
-                                "created": int(time.time()),
-                                "model": request.model,
-                                "choices": [
-                                    {
-                                        "index": 0,
-                                        "delta": {"content": chunk},
-                                        "finish_reason": None
-                                    }
-                                ]
-                            }
-                            yield f"data: {json.dumps(response_chunk)}\n\n"
-                    except Exception as e:
-                        logger.error(f"Error in stream wrapper: {str(e)}")
-                        error_chunk = {
-                            "error": {
-                                "message": str(e),
-                                "type": "internal_error"
-                            }
-                        }
-                        yield f"data: {json.dumps(error_chunk)}\n\n"
-                    finally:
-                        # Send final chunk with finish_reason
-                        final_chunk = {
-                            "id": f"chatcmpl-{int(time.time())}",
-                            "object": "chat.completion.chunk",
-                            "created": int(time.time()),
-                            "model": request.model,
-                            "choices": [
-                                {
-                                    "index": 0,
-                                    "delta": {},
-                                    "finish_reason": "stop"
-                                }
-                            ]
-                        }
-                        yield f"data: {json.dumps(final_chunk)}\n\n"
-                        yield "data: [DONE]\n\n"
-                
-                return StreamingResponse(
-                    stream_wrapper(),
-                    media_type="text/event-stream",
-                    headers={
-                        "Cache-Control": "no-cache",
-                        "Connection": "keep-alive",
-                        "X-Accel-Buffering": "no"
-                    }
-                )
-            else:
-                # For non-streaming, get the complete response
-                final_response = await handler.generate_vision_response(request)
-                
-                # Format the final response in OpenAI's format
-                return {
-                    "id": "chatcmpl-" + str(int(time.time())),
-                    "object": "chat.completion",
-                    "created": int(time.time()),
-                    "model": request.model,
-                    "choices": [
-                        {
-                            "index": 0,
-                            "message": {
-                                "role": "assistant",
-                                "content": final_response
-                            },
-                            "finish_reason": "stop"
-                        }
-                    ]
-                }
-        else:
-            # Add support for text responses
-            logger.info("Processing text-only request")
-            
-            if request.stream:
-                # For streaming, get the generator and wrap it in OpenAI format
-                async def stream_wrapper():
-                    try:
-                        async for chunk in handler.generate_text_stream(request):
-                            response_chunk = {
-                                "id": f"chatcmpl-{int(time.time())}",
-                                "object": "chat.completion.chunk",
-                                "created": int(time.time()),
-                                "model": request.model,
-                                "choices": [
-                                    {
-                                        "index": 0,
-                                        "delta": {"content": chunk},
-                                        "finish_reason": None
-                                    }
-                                ]
-                            }
-                            yield f"data: {json.dumps(response_chunk)}\n\n"
-                    except Exception as e:
-                        logger.error(f"Error in stream wrapper: {str(e)}")
-                        error_chunk = {
-                            "error": {
-                                "message": str(e),
-                                "type": "internal_error"
-                            }
-                        }
-                        yield f"data: {json.dumps(error_chunk)}\n\n"
-                    finally:
-                        # Send final chunk with finish_reason
-                        final_chunk = {
-                            "id": f"chatcmpl-{int(time.time())}",
-                            "object": "chat.completion.chunk",
-                            "created": int(time.time()),
-                            "model": request.model,
-                            "choices": [
-                                {
-                                    "index": 0,
-                                    "delta": {},
-                                    "finish_reason": "stop"
-                                }
-                            ]
-                        }
-                        yield f"data: {json.dumps(final_chunk)}\n\n"
-                        yield "data: [DONE]\n\n"
-                
-                return StreamingResponse(
-                    stream_wrapper(),
-                    media_type="text/event-stream",
-                    headers={
-                        "Cache-Control": "no-cache",
-                        "Connection": "keep-alive",
-                        "X-Accel-Buffering": "no"
-                    }
-                )
-            else:
-                # For non-streaming, get the complete response
-                final_response = await handler.generate_text_response(request)
-                
-                # Format the final response in OpenAI's format
-                return {
-                    "id": "chatcmpl-" + str(int(time.time())),
-                    "object": "chat.completion",
-                    "created": int(time.time()),
-                    "model": request.model,
-                    "choices": [
-                        {
-                            "index": 0,
-                            "message": {
-                                "role": "assistant",
-                                "content": final_response
-                            },
-                            "finish_reason": "stop"
-                        }
-                    ]
-                }
+        return await process_vision_request(handler, request) if request.is_vision_request() \
+               else await process_text_request(handler, request)
     except Exception as e:
         logger.error(f"Error processing chat completion request: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse(content=create_error_response(str(e)), status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
+
+def create_response_chunk(content: str, model: str, is_final: bool = False):
+    """Create a formatted response chunk for streaming."""
+    return {
+        "id": get_id(),
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "delta": {} if is_final else {"content": content},
+            "finish_reason": "stop" if is_final else None
+        }]
+    }
+
+
+async def handle_stream_response(generator, model: str):
+    """Handle streaming response generation."""
+    try:
+        async for chunk in generator:
+            yield f"data: {json.dumps(create_response_chunk(chunk, model))}\n\n"
+    except Exception as e:
+        logger.error(f"Error in stream wrapper: {str(e)}")
+        yield f"data: {json.dumps({'error': create_error_response(str(e))})}\n\n"
+    finally:
+        yield f"data: {json.dumps(create_response_chunk('', model, is_final=True))}\n\n"
+        yield "data: [DONE]\n\n"
+
+async def process_vision_request(handler, request: ChatCompletionRequest):
+    """Process vision-specific requests."""
+    if request.stream:
+        return StreamingResponse(
+            handle_stream_response(handler.generate_vision_stream(request), request.model),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"}
+        )
+    return format_final_response(await handler.generate_vision_response(request), request.model)
+
+async def process_text_request(handler, request: ChatCompletionRequest):
+    """Process text-only requests."""
+    if request.stream:
+        return StreamingResponse(
+            handle_stream_response(handler.generate_text_stream(request), request.model),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"}
+        )
+    return format_final_response(await handler.generate_text_response(request), request.model)
+
+
+
+
+def format_final_response(content: str, model: str):
+    """Format the final non-streaming response."""
+    return {
+        "id": get_id(),
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": content
+            },
+            "finish_reason": "stop"
+        }]
+    }
+
+def get_id():
+    return f"chatcmpl-{int(time.time())}{random.randint(0, 10000)}"

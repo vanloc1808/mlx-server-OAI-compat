@@ -255,7 +255,8 @@ curl localhost:8000/v1/chat/completions \
         "role": "user",
         "content": "What is the capital of France?"
       }
-    ]
+    ],
+    "stream": true
   }'
 ```
 
