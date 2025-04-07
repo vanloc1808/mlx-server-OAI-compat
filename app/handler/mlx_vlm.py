@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from PIL import Image
 
 from app.core.image_processor import ImageProcessor
+from app.core.metrics import RequestMetrics
 from app.core.queue import RequestQueue
 from app.models.mlx_vlm import MLX_VLM
 from app.schemas.openai import ChatCompletionRequest
@@ -50,17 +51,7 @@ class MLXHandler:
         self.request_queue = RequestQueue(max_concurrency=max_concurrency)
         
         # Initialize metrics tracking
-        self.metrics = {
-            "total_requests": 0,
-            "total_tokens": 0,
-            "total_time": 0,
-            "request_types": defaultdict(int),
-            "error_count": 0,
-            "avg_tps": 0,
-            "max_tps": 0,
-            "min_tps": 0,
-            "request_history": []
-        }
+        self.metrics = RequestMetrics()
         
         logger.info(f"Initialized MLXHandler with model path: {model_path}")
     
@@ -128,7 +119,7 @@ class MLXHandler:
                     
                     # Update token count
                     if text_chunk:
-                        chunk_metrics = self._estimate_tokens(text_chunk)
+                        chunk_metrics = RequestMetrics.estimate_tokens(text_chunk)
                         total_tokens += chunk_metrics["estimated_tokens"]
                         total_words += chunk_metrics["word_count"]
                         total_chars += chunk_metrics["char_count"]
@@ -147,17 +138,17 @@ class MLXHandler:
                 "elapsed_time": elapsed_time,
                 "tps": tps
             }
-            self._update_metrics("vision_stream", metrics)
+            self.metrics.update("vision_stream", metrics)
         
         except asyncio.QueueFull:
-            self.metrics["error_count"] += 1
+            self.metrics.increment_error_count()
             raise HTTPException(
                 status_code=429,
                 detail="Too many requests. Service is at capacity."
             )
 
         except Exception as e:
-            self.metrics["error_count"] += 1
+            self.metrics.increment_error_count()
             logger.error(f"Error in vision stream generation for request {request_id}: {str(e)}")
             raise HTTPException(
                 status_code=500,
@@ -198,7 +189,7 @@ class MLXHandler:
             
             # Calculate and log TPS statistics
             elapsed_time = time.time() - start_time
-            metrics = self._estimate_tokens(response)
+            metrics = RequestMetrics.estimate_tokens(response)
             tps = metrics["estimated_tokens"] / elapsed_time if elapsed_time > 0 else 0
             
             # Update metrics
@@ -207,18 +198,18 @@ class MLXHandler:
                 "tps": tps,
                 "token_count": metrics["estimated_tokens"]
             })
-            self._update_metrics("vision", metrics)
+            self.metrics.update("vision", metrics)
             
             return response
             
         except asyncio.QueueFull:
-            self.metrics["error_count"] += 1
+            self.metrics.increment_error_count()
             raise HTTPException(
                 status_code=429,
                 detail="Too many requests. Service is at capacity."
             )
         except Exception as e:
-            self.metrics["error_count"] += 1
+            self.metrics.increment_error_count()
             logger.error(f"Error in vision response generation: {str(e)}")
             raise HTTPException(
                 status_code=500,
@@ -272,7 +263,7 @@ class MLXHandler:
                     
                     # Update token count
                     if text_chunk:
-                        chunk_metrics = self._estimate_tokens(text_chunk)
+                        chunk_metrics = RequestMetrics.estimate_tokens(text_chunk)
                         total_tokens += chunk_metrics["estimated_tokens"]
                         total_words += chunk_metrics["word_count"]
                         total_chars += chunk_metrics["char_count"]
@@ -291,16 +282,16 @@ class MLXHandler:
                 "elapsed_time": elapsed_time,
                 "tps": tps
             }
-            self._update_metrics("text_stream", metrics)
+            self.metrics.update("text_stream", metrics)
             
         except asyncio.QueueFull:
-            self.metrics["error_count"] += 1
+            self.metrics.increment_error_count()
             raise HTTPException(
                 status_code=429,
                 detail="Too many requests. Service is at capacity."
             )
         except Exception as e:
-            self.metrics["error_count"] += 1
+            self.metrics.increment_error_count()
             logger.error(f"Error in text stream generation for request {request_id}: {str(e)}")
             raise HTTPException(
                 status_code=500,
@@ -340,7 +331,7 @@ class MLXHandler:
             
             # Calculate and log TPS statistics
             elapsed_time = time.time() - start_time
-            metrics = self._estimate_tokens(response)
+            metrics = RequestMetrics.estimate_tokens(response)
             tps = metrics["estimated_tokens"] / elapsed_time if elapsed_time > 0 else 0
             
             # Update metrics
@@ -349,18 +340,18 @@ class MLXHandler:
                 "tps": tps,
                 "token_count": metrics["estimated_tokens"]
             })
-            self._update_metrics("text", metrics)
+            self.metrics.update("text", metrics)
             
             return response
             
         except asyncio.QueueFull:
-            self.metrics["error_count"] += 1
+            self.metrics.increment_error_count()
             raise HTTPException(
                 status_code=429,
                 detail="Too many requests. Service is at capacity."
             )
         except Exception as e:
-            self.metrics["error_count"] += 1
+            self.metrics.increment_error_count()
             logger.error(f"Error in text response generation: {str(e)}")
             raise HTTPException(
                 status_code=500,
@@ -414,7 +405,7 @@ class MLXHandler:
             # Calculate tokens in the response
             # For simple text responses, approximating token count as words/1.3
             if isinstance(response, str):
-                metrics = self._estimate_tokens(response)
+                metrics = RequestMetrics.estimate_tokens(response)
                 token_count = metrics["estimated_tokens"]
                 tps = token_count / elapsed_time if elapsed_time > 0 else 0
                 logger.info(f"Request completed: {token_count} tokens in {elapsed_time:.2f}s ({tps:.2f} tokens/sec)")
@@ -424,86 +415,6 @@ class MLXHandler:
         except Exception as e:
             logger.error(f"Error processing vision request: {str(e)}")
             raise
-    
-    def _estimate_tokens(self, text: str) -> Dict[str, int]:
-        """
-        Estimate the number of tokens in a text with more detailed metrics.
-        
-        Args:
-            text (str): The text to estimate tokens for.
-            
-        Returns:
-            Dict[str, int]: Dictionary containing token estimates and metrics.
-        """
-        # Split into words and count
-        words = text.split()
-        word_count = len(words)
-        
-        # Count characters
-        char_count = len(text)
-        
-        # Estimate tokens using different methods
-        # Method 1: words/1.3 (common approximation)
-        tokens_by_words = int(word_count / 1.3)
-        
-        # Method 2: chars/4 (another common approximation)
-        tokens_by_chars = int(char_count / 4)
-        
-        # Use the average of both methods for better accuracy
-        estimated_tokens = (tokens_by_words + tokens_by_chars) // 2
-        
-        return {
-            "estimated_tokens": estimated_tokens,
-            "word_count": word_count,
-            "char_count": char_count,
-            "tokens_by_words": tokens_by_words,
-            "tokens_by_chars": tokens_by_chars
-        }
-
-    def _update_metrics(self, request_type: str, metrics: Dict[str, Any]):
-        """
-        Update the global metrics with new request statistics.
-        
-        Args:
-            request_type (str): Type of request (vision/text, streaming/non-streaming)
-            metrics (Dict[str, Any]): Request-specific metrics
-        """
-        self.metrics["total_requests"] += 1
-        self.metrics["request_types"][request_type] += 1
-        
-        # Update token and time metrics - use get() with defaults for safety
-        self.metrics["total_tokens"] += metrics.get("token_count", metrics.get("estimated_tokens", 0))
-        self.metrics["total_time"] += metrics.get("elapsed_time", 0)
-        
-        # Update TPS metrics
-        current_tps = metrics.get("tps", 0)
-        self.metrics["avg_tps"] = (self.metrics["avg_tps"] * (self.metrics["total_requests"] - 1) + current_tps) / self.metrics["total_requests"]
-        self.metrics["max_tps"] = max(self.metrics["max_tps"], current_tps)
-        if self.metrics["total_requests"] == 1 or current_tps < self.metrics["min_tps"]:
-            self.metrics["min_tps"] = current_tps
-        
-        # Add to request history (keep last 100 requests)
-        self.metrics["request_history"].append({
-            "timestamp": time.time(),
-            "request_type": request_type,
-            **metrics
-        })
-        if len(self.metrics["request_history"]) > 100:
-            self.metrics["request_history"].pop(0)
-        
-        # Log detailed metrics - use get() with defaults for safety
-        token_count = metrics.get("token_count", metrics.get("estimated_tokens", 0))
-        word_count = metrics.get("word_count", 0)
-        char_count = metrics.get("char_count", 0)
-        elapsed_time = metrics.get("elapsed_time", 0)
-        
-        logger.info(
-            f"Request completed: {request_type}\n"
-            f"Tokens: {token_count} (words: {word_count}, chars: {char_count})\n"
-            f"Time: {elapsed_time:.2f}s\n"
-            f"TPS: {current_tps:.2f}\n"
-            f"Avg TPS: {self.metrics['avg_tps']:.2f}"
-        )
 
     async def get_queue_stats(self) -> Dict[str, Any]:
         """
@@ -514,24 +425,9 @@ class MLXHandler:
         """
         queue_stats = self.request_queue.get_queue_stats()
         
-        # Calculate additional metrics
-        metrics_summary = {
-            "total_requests": self.metrics["total_requests"],
-            "total_tokens": self.metrics["total_tokens"],
-            "total_time": self.metrics["total_time"],
-            "request_types": dict(self.metrics["request_types"]),
-            "error_count": self.metrics["error_count"],
-            "performance": {
-                "avg_tps": self.metrics["avg_tps"],
-                "max_tps": self.metrics["max_tps"],
-                "min_tps": self.metrics["min_tps"],
-                "recent_requests": len(self.metrics["request_history"])
-            }
-        }
-        
         return {
             "queue_stats": queue_stats,
-            "metrics": metrics_summary
+            "metrics": self.metrics.get_summary()
         }
 
     async def _prepare_text_request(self, request: ChatCompletionRequest) -> Tuple[List[Dict[str, str]], Dict[str, Any]]:
