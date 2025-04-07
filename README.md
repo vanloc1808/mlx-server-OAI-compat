@@ -101,7 +101,7 @@ Response example:
 {
   "status": "ok",
   "queue_stats": {
-    "vision_queue": {
+    "request_queue": {
       "running": true,
       "queue_size": 3,
       "max_queue_size": 100,

@@ -53,7 +53,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down application")
     if app.state.handler:
         # Ensure queue is stopped
-        await app.state.handler.vision_queue.stop()
+        await app.state.handler.request_queue.stop()
 
 # Create FastAPI app
 app = FastAPI(

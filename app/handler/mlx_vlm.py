@@ -46,7 +46,7 @@ class MLXHandler:
         # Initialize request queue for vision and text tasks
         # We use the same queue for both vision and text tasks for simplicity
         # and to ensure we don't overload the model with too many concurrent requests
-        self.vision_queue = RequestQueue(max_concurrency=max_concurrency)
+        self.request_queue = RequestQueue(max_concurrency=max_concurrency)
         
         # Initialize metrics tracking
         self.metrics = {
@@ -71,12 +71,12 @@ class MLXHandler:
                 "timeout": 300,
                 "queue_size": 100
             }
-        self.vision_queue = RequestQueue(
+        self.request_queue = RequestQueue(
             max_concurrency=queue_config.get("max_concurrency"),
             timeout=queue_config.get("timeout"),
             queue_size=queue_config.get("queue_size")
         )
-        await self.vision_queue.start(self._process_vision_request)
+        await self.request_queue.start(self._process_vision_request)
         logger.info("Initialized MLXHandler and started request queue")
 
     async def generate_vision_stream(self, request: ChatCompletionRequest):
@@ -182,7 +182,7 @@ class MLXHandler:
             start_time = time.time()
             
             # Submit to the vision queue and wait for result
-            response = await self.vision_queue.submit(request_id, request_data)
+            response = await self.request_queue.submit(request_id, request_data)
             
             # Calculate and log TPS statistics
             elapsed_time = time.time() - start_time
@@ -313,7 +313,7 @@ class MLXHandler:
             start_time = time.time()
             
             # Submit to the vision queue (reusing the same queue for text requests)
-            response = await self.vision_queue.submit(request_id, request_data)
+            response = await self.request_queue.submit(request_id, request_data)
             
             # Calculate and log TPS statistics
             elapsed_time = time.time() - start_time
@@ -454,7 +454,7 @@ class MLXHandler:
 
     async def _process_vision_request(self, request_data: Dict[str, Any]) -> str:
         """
-        Process a vision request. This is the worker function for the vision queue.
+        Process a vision request. This is the worker function for the request queue.
         
         Args:
             request_data: Dictionary containing the request data.
@@ -590,7 +590,7 @@ class MLXHandler:
         Returns:
             Dict with queue and performance statistics.
         """
-        queue_stats = self.vision_queue.get_queue_stats()
+        queue_stats = self.request_queue.get_queue_stats()
         
         # Calculate additional metrics
         metrics_summary = {
