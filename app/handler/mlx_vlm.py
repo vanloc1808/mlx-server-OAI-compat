@@ -89,7 +89,6 @@ class MLXHandler:
         Returns:
             AsyncGenerator: Yields response chunks.
         """
-        chat_messages, image_paths, model_params = await self._prepare_vision_request(request)
         
         # Create a unique request ID
         request_id = f"vision-{uuid.uuid4()}"
@@ -101,14 +100,19 @@ class MLXHandler:
             total_tokens = 0
             total_words = 0
             total_chars = 0
+
+            chat_messages, image_paths, model_params = await self._prepare_vision_request(request)
             
-            # Get the generator from the model
-            response_generator = self.model(
-                images=image_paths,
-                messages=chat_messages,
-                stream=True,
+            # Create a request data object
+            request_data = {
+                "images": image_paths,
+                "messages": chat_messages,
+                "stream": True,
                 **model_params
-            )
+            }
+            
+            # Submit to the vision queue and get the generator
+            response_generator = await self.request_queue.submit(request_id, request_data)
             
             # Process and yield each chunk asynchronously
             for chunk in response_generator:
@@ -143,7 +147,14 @@ class MLXHandler:
                 "tps": tps
             }
             self._update_metrics("vision_stream", metrics)
-            
+        
+        except asyncio.QueueFull:
+            self.metrics["error_count"] += 1
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests. Service is at capacity."
+            )
+
         except Exception as e:
             self.metrics["error_count"] += 1
             logger.error(f"Error in vision stream generation for request {request_id}: {str(e)}")
@@ -216,6 +227,7 @@ class MLXHandler:
     async def generate_text_stream(self, request: ChatCompletionRequest):
         """
         Generate a streaming response for text-only chat completion requests.
+        Uses the request queue for handling concurrent requests.
         
         Args:
             request: ChatCompletionRequest object containing the messages.
@@ -223,8 +235,6 @@ class MLXHandler:
         Returns:
             AsyncGenerator: Yields response chunks.
         """
-        chat_messages, model_params = await self._prepare_text_request(request)
-        
         # Create a unique request ID
         request_id = f"text-{uuid.uuid4()}"
         
@@ -235,14 +245,20 @@ class MLXHandler:
             total_words = 0
             total_chars = 0
             
-            # Get the generator from the model
-            response_generator = self.model(
-                messages=chat_messages,
-                stream=True,
-                **model_params
-            )
+            # Prepare the text request
+            chat_messages, model_params = await self._prepare_text_request(request)
             
-            # Process and yield each chunk asynchronously
+            # Create a request data object
+            request_data = {
+                "messages": chat_messages,
+                "stream": True,
+                **model_params
+            }
+            
+            # Submit to the request queue and get the generator
+            response_generator = await self.request_queue.submit(request_id, request_data)
+            
+            # Process and yield each chunk
             for chunk in response_generator:
                 if chunk:
                     text_chunk = ""
@@ -276,6 +292,12 @@ class MLXHandler:
             }
             self._update_metrics("text_stream", metrics)
             
+        except asyncio.QueueFull:
+            self.metrics["error_count"] += 1
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests. Service is at capacity."
+            )
         except Exception as e:
             self.metrics["error_count"] += 1
             logger.error(f"Error in text stream generation for request {request_id}: {str(e)}")
