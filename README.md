@@ -101,7 +101,7 @@ Response example:
 {
   "status": "ok",
   "queue_stats": {
-    "vision_queue": {
+    "request_queue": {
       "running": true,
       "queue_size": 3,
       "max_queue_size": 100,
@@ -255,7 +255,8 @@ curl localhost:8000/v1/chat/completions \
         "role": "user",
         "content": "What is the capital of France?"
       }
-    ]
+    ],
+    "stream": true
   }'
 ```
 

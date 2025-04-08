@@ -1,5 +1,7 @@
-from typing import List, Dict, Optional, Union, Any
+from typing import Any, Dict, List, Optional, Union
+
 from pydantic import BaseModel, Field, validator
+
 
 # Configuration
 class Config:
@@ -9,6 +11,13 @@ class Config:
     TEXT_MODEL = "gpt-4-turbo"          # Default model for text-based chat completions
     VISION_MODEL = "gpt-4-vision-preview"  # Model used for vision-based requests
     EMBEDDING_MODEL = "text-embedding-ada-002"  # Model used for generating embeddings
+
+class ErrorResponse(BaseModel):
+    object: str = "error"
+    message: str
+    type: str
+    param: Optional[str] = None
+    code: int
 
 class ImageUrl(BaseModel):
     """
