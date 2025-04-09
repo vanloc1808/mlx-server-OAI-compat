@@ -76,6 +76,17 @@ logger.add(
     help="Maximum queue size for pending requests"
 )
 def launch(model_path, port, host, max_concurrency, queue_timeout, queue_size):
+    # Set up the server configuration
+    args = Config(
+        model_path=model_path,
+        port=port,
+        host=host,
+        max_concurrency=max_concurrency,
+        queue_timeout=queue_timeout,
+        queue_size=queue_size
+    )
+    
+    
     """Launch the MLX server with the specified model."""
     # Log a startup banner with configuration details
     logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -89,16 +100,6 @@ def launch(model_path, port, host, max_concurrency, queue_timeout, queue_size):
     logger.info(f"📊 Queue Size: {queue_size}")
     logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
-    # Set up the server configuration
-    args = Config(
-        model_path=model_path,
-        port=port,
-        host=host,
-        max_concurrency=max_concurrency,
-        queue_timeout=queue_timeout,
-        queue_size=queue_size
-    )
-    
     config = asyncio.run(setup_server(args))
     logger.info("Server configuration complete.")
     logger.info("Starting Uvicorn server...")
