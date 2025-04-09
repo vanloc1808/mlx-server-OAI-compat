@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app import MLXHandler
+from app.handler.mlx_vlm import MLXHandler
 from app.api.endpoints import router
 
 # Configure logging
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 def parse_args():
     parser = argparse.ArgumentParser(description="OAI-compatible proxy")
-    parser.add_argument("--model-path", type=str, required=True, help="Path to the model")
+    parser.add_argument("--model-path", type=str, required=True, help="Huggingface model repo or local path")
     parser.add_argument("--port", type=int, default=8000, help="Port to run the server on")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to run the server on")
     parser.add_argument("--max-concurrency", type=int, default=1, help="Maximum number of concurrent requests")
@@ -31,66 +31,79 @@ def parse_args():
     return parser.parse_args()
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    try:
-        logger.info(f"Initializing MLX handler with model path: {args.model_path}")
-        handler = MLXHandler(
-            model_path=args.model_path,
-            max_concurrency=args.max_concurrency
-        )
-        # Initialize queue
-        await handler.initialize()
-        logger.info("MLX handler initialized successfully")
-        app.state.handler = handler
-    except Exception as e:
-        logger.error(f"Failed to initialize MLX handler: {str(e)}")
-        raise
-    gc.collect()
-    gc.freeze()
-    yield
-    # Shutdown
-    logger.info("Shutting down application")
-    if app.state.handler:
-        # Ensure queue is stopped
-        await app.state.handler.request_queue.stop()
+def create_lifespan(config_args):
+    """Factory function to create a lifespan context manager with access to config args."""
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        try:
+            logger.info(f"Initializing MLX handler with model path: {config_args.model_path}")
+            handler = MLXHandler(
+                model_path=config_args.model_path,
+                max_concurrency=config_args.max_concurrency
+            )
+            # Initialize queue
+            await handler.initialize({
+                "max_concurrency": config_args.max_concurrency,
+                "timeout": config_args.queue_timeout,
+                "queue_size": config_args.queue_size
+            })
+            logger.info("MLX handler initialized successfully")
+            app.state.handler = handler
+        except Exception as e:
+            logger.error(f"Failed to initialize MLX handler: {str(e)}")
+            raise
+        gc.collect()
+        gc.freeze()
+        yield
+        # Shutdown
+        logger.info("Shutting down application")
+        if app.state.handler:
+            # Ensure queue is stopped
+            await app.state.handler.request_queue.stop()
+    
+    return lifespan
 
-# Create FastAPI app
-app = FastAPI(
-    title="OpenAI-compatible API",
-    description="API for OpenAI-compatible chat completion and text embedding",
-    version="0.1",
-    lifespan=lifespan
-)
-
-app.include_router(router)
-
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.middleware("http")
-async def add_process_time_header(request: Request, call_next):
-    start_time = time.time()
-    response = await call_next(request)
-    process_time = time.time() - start_time
-    response.headers["X-Process-Time"] = str(process_time)
-    return response
-
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Global exception handler caught: {str(exc)}", exc_info=True)
-    return JSONResponse(
-        status_code=500,
-        content={"error": {"message": "Internal server error", "type": "internal_error"}}
-    )
+# App instance will be created during setup with the correct lifespan
+app = None
 
 async def setup_server(args) -> uvicorn.Config:
+    global app
+    
+    # Create FastAPI app with the configured lifespan
+    app = FastAPI(
+        title="OpenAI-compatible API",
+        description="API for OpenAI-compatible chat completion and text embedding",
+        version="0.1",
+        lifespan=create_lifespan(args)
+    )
+    
+    app.include_router(router)
+    
+    # Add CORS middleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # In production, replace with specific origins
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    
+    @app.middleware("http")
+    async def add_process_time_header(request: Request, call_next):
+        start_time = time.time()
+        response = await call_next(request)
+        process_time = time.time() - start_time
+        response.headers["X-Process-Time"] = str(process_time)
+        return response
+    
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception):
+        logger.error(f"Global exception handler caught: {str(exc)}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"error": {"message": "Internal server error", "type": "internal_error"}}
+        )
+    
     logger.info(f"Starting server on {args.host}:{args.port}")
     config = uvicorn.Config(
         app=app,

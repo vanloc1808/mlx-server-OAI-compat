@@ -1,4 +1,0 @@
-mlx-vlm==0.1.21
-fastapi
-uvicorn
-Pillow

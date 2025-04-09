@@ -1,13 +1,7 @@
-from app.handler.mlx_vlm import MLXHandler
-from app.models.mlx_vlm import MLX_VLM
-from app.schemas.openai import ChatCompletionRequest, EmbeddingRequest
+import os
+from app.version import __version__
 
-__version__ = "1.0.1"
+# Suppress transformers warnings
+os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
 
-__all__ = [
-    "MLXHandler",
-    "MLX_VLM",
-    "ChatCompletionRequest",
-    "EmbeddingRequest",
-    "__version__",
-]
+__all__ = ["__version__"]
