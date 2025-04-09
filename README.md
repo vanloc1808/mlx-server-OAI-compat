@@ -25,7 +25,7 @@ We recommend using a native Python version (supporting ARM architecture). The de
 
 3. Install the required Python dependencies:
     ```bash
-    pip install -r requirements.txt
+    pip install -e .
     ```
 
 ### Troubleshooting
@@ -71,6 +71,10 @@ You can also install the package and use the CLI command to launch the server:
 ### Installation with CLI
 ```bash
 pip install -e .
+```
+or
+```bash
+pip install git@https://github.com/cubist38/mlx-server-OAI-compat.git
 ```
 
 ### Using the CLI
@@ -482,3 +486,32 @@ Your collective efforts continue to drive progress and make projects like this p
 
 ### Special Thanks
 A special acknowledgment to all contributors, users, and supporters who have helped shape this project through their feedback, bug reports, and suggestions. Your engagement helps make this project better for everyone.
+
+## Recent Updates
+
+### Enhanced User Interface
+The server now features a more visually appealing command-line interface with:
+- ✨ Beautiful startup banners with emoji indicators
+- 📏 Clean and consistent horizontal dividers
+- 📊 Enhanced logging with improved readability
+- 🎨 Color-coded output for better visual distinction
+
+### Improved Architecture
+Recent architectural improvements include:
+- 🔄 Refactored configuration management to support cleaner dependency injection
+- 🛡️ Enhanced error handling with proper context management
+- 🧩 Factory pattern implementation for more flexible component creation
+- ⚙️ Optimized request processing pipeline
+
+### Warning Suppression
+The server now automatically suppresses common warnings:
+- 🔕 Transformers framework detection warnings
+- 📝 Explicit configuration for Python warnings system
+- 🎯 More targeted filtering of specific warning messages
+
+### Enhanced Error Resilience
+- 🔄 Improved recovery from initialization errors
+- 🛑 Graceful handling of configuration issues
+- 🔄 Better state management during startup and shutdown
+
+These improvements enhance both user experience and system reliability, making the server easier to use and more robust in production environments.

@@ -3,10 +3,14 @@ import click
 import uvicorn
 from loguru import logger
 import sys
+import os
+import warnings
+from functools import lru_cache
 from app.version import __version__
 from app.main import setup_server
 
 class Config:
+    """Configuration container for server parameters."""
     def __init__(self, model_path, port, host, max_concurrency, queue_timeout, queue_size):
         self.model_path = model_path
         self.port = port
@@ -14,6 +18,25 @@ class Config:
         self.max_concurrency = max_concurrency
         self.queue_timeout = queue_timeout
         self.queue_size = queue_size
+
+
+# Configure Loguru once at module level
+def configure_logging():
+    """Set up optimized logging configuration."""
+    logger.remove()  # Remove default handler
+    logger.add(
+        sys.stderr, 
+        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+               "<level>{level: <8}</level> | "
+               "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
+               "✦ <level>{message}</level>",
+        colorize=True,
+        level="INFO"
+    )
+
+# Apply logging configuration
+configure_logging()
+
 
 @click.group()
 @click.version_option(
@@ -28,17 +51,33 @@ def cli():
     """MLX Server - OpenAI Compatible API for MLX models."""
     pass
 
-# Configure Loguru
-logger.remove()  # Remove default handler
-logger.add(
-    sys.stderr, 
-    format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
-           "<level>{level: <8}</level> | "
-           "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
-           "✦ <level>{message}</level>",
-    colorize=True,
-    level="INFO"
-)
+
+@lru_cache(maxsize=1)
+def get_server_config(model_path, port, host, max_concurrency, queue_timeout, queue_size):
+    """Cache and return server configuration to avoid redundant processing."""
+    return Config(
+        model_path=model_path,
+        port=port,
+        host=host,
+        max_concurrency=max_concurrency,
+        queue_timeout=queue_timeout,
+        queue_size=queue_size
+    )
+
+
+def print_startup_banner(args):
+    """Display beautiful startup banner with configuration details."""
+    logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    logger.info(f"✨ MLX Server v{__version__} Starting ✨")
+    logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    logger.info(f"🔮 Model: {args.model_path}")
+    logger.info(f"🌐 Host: {args.host}")
+    logger.info(f"🔌 Port: {args.port}")
+    logger.info(f"⚡ Max Concurrency: {args.max_concurrency}")
+    logger.info(f"⏱️ Queue Timeout: {args.queue_timeout} seconds")
+    logger.info(f"📊 Queue Size: {args.queue_size}")
+    logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
 
 @cli.command()
 @click.option(
@@ -76,34 +115,25 @@ logger.add(
     help="Maximum queue size for pending requests"
 )
 def launch(model_path, port, host, max_concurrency, queue_timeout, queue_size):
-    # Set up the server configuration
-    args = Config(
-        model_path=model_path,
-        port=port,
-        host=host,
-        max_concurrency=max_concurrency,
-        queue_timeout=queue_timeout,
-        queue_size=queue_size
-    )
-    
-    
     """Launch the MLX server with the specified model."""
-    # Log a startup banner with configuration details
-    logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    logger.info(f"✨ MLX Server v{__version__} Starting ✨")
-    logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    logger.info(f"🔮 Model: {model_path}")
-    logger.info(f"🌐 Host: {host}")
-    logger.info(f"🔌 Port: {port}")
-    logger.info(f"⚡ Max Concurrency: {max_concurrency}")
-    logger.info(f"⏱️ Queue Timeout: {queue_timeout} seconds")
-    logger.info(f"📊 Queue Size: {queue_size}")
-    logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    try:
+        # Get optimized configuration
+        args = get_server_config(model_path, port, host, max_concurrency, queue_timeout, queue_size)
+        
+        # Display startup information
+        print_startup_banner(args)
+        
+        # Set up and start the server
+        config = asyncio.run(setup_server(args))
+        logger.info("Server configuration complete.")
+        logger.info("Starting Uvicorn server...")
+        uvicorn.Server(config).run()
+    except KeyboardInterrupt:
+        logger.info("Server shutdown requested by user. Exiting...")
+    except Exception as e:
+        logger.error(f"Server startup failed: {str(e)}")
+        sys.exit(1)
 
-    config = asyncio.run(setup_server(args))
-    logger.info("Server configuration complete.")
-    logger.info("Starting Uvicorn server...")
-    uvicorn.Server(config).run()
 
 if __name__ == "__main__":
     cli()
