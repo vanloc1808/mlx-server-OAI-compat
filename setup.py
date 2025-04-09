@@ -14,6 +14,7 @@ setup(
         "uvicorn",
         "Pillow",
         "click",
+        "loguru",
     ],
     extras_require={
         "dev": [
