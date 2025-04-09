@@ -2,7 +2,9 @@ import asyncio
 import click
 import uvicorn
 from app.main import setup_server
-from app.version import __version__
+
+# Use a hardcoded version to avoid import issues
+__version__ = "1.0.1"
 
 class Config:
     def __init__(self, model_path, port, host, max_concurrency, queue_timeout, queue_size):

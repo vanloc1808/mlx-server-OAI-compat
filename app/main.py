@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app import MLXHandler
+from app.handler.mlx_vlm import MLXHandler
 from app.api.endpoints import router
 
 # Configure logging
