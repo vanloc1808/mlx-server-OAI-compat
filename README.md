@@ -25,6 +25,10 @@ We recommend using a native Python version (supporting ARM architecture). The de
 
 3. Install the required Python dependencies:
     ```bash
+    pip install git+https://github.com/cubist38/mlx-server-OAI-compat.git
+    ```
+    or 
+    ```
     pip install -e .
     ```
 
@@ -67,15 +71,6 @@ python -m app.main \
 
 ## CLI Usage
 You can also install the package and use the CLI command to launch the server:
-
-### Installation with CLI
-```bash
-pip install -e .
-```
-or
-```bash
-pip install git@https://github.com/cubist38/mlx-server-OAI-compat.git
-```
 
 ### Using the CLI
 ```bash
