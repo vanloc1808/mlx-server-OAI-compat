@@ -1,10 +1,10 @@
 import asyncio
 import click
 import uvicorn
+from loguru import logger
+import sys
+from app.version import __version__
 from app.main import setup_server
-
-# Use a hardcoded version to avoid import issues
-__version__ = "1.0.1"
 
 class Config:
     def __init__(self, model_path, port, host, max_concurrency, queue_timeout, queue_size):
@@ -16,10 +16,29 @@ class Config:
         self.queue_size = queue_size
 
 @click.group()
-@click.version_option(version=__version__)
+@click.version_option(
+    version=__version__, 
+    message="""
+✨ %(prog)s - OpenAI Compatible API Server ✨
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚀 Version: %(version)s
+"""
+)
 def cli():
     """MLX Server - OpenAI Compatible API for MLX models."""
     pass
+
+# Configure Loguru
+logger.remove()  # Remove default handler
+logger.add(
+    sys.stderr, 
+    format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+           "<level>{level: <8}</level> | "
+           "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
+           "✦ <level>{message}</level>",
+    colorize=True,
+    level="INFO"
+)
 
 @cli.command()
 @click.option(
@@ -58,8 +77,19 @@ def cli():
 )
 def launch(model_path, port, host, max_concurrency, queue_timeout, queue_size):
     """Launch the MLX server with the specified model."""
-    click.echo(f"Starting MLX server with model: {model_path} on {host}:{port}")
-    
+    # Log a startup banner with configuration details
+    logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    logger.info(f"✨ MLX Server v{__version__} Starting ✨")
+    logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    logger.info(f"🔮 Model: {model_path}")
+    logger.info(f"🌐 Host: {host}")
+    logger.info(f"🔌 Port: {port}")
+    logger.info(f"⚡ Max Concurrency: {max_concurrency}")
+    logger.info(f"⏱️ Queue Timeout: {queue_timeout} seconds")
+    logger.info(f"📊 Queue Size: {queue_size}")
+    logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+    # Set up the server configuration
     args = Config(
         model_path=model_path,
         port=port,
@@ -70,7 +100,9 @@ def launch(model_path, port, host, max_concurrency, queue_timeout, queue_size):
     )
     
     config = asyncio.run(setup_server(args))
+    logger.info("Server configuration complete.")
+    logger.info("Starting Uvicorn server...")
     uvicorn.Server(config).run()
 
 if __name__ == "__main__":
-    cli() 
+    cli()

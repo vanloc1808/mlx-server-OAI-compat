@@ -3,3 +3,6 @@ fastapi
 uvicorn
 Pillow
 click
+python-dotenv
+openai
+loguru
