@@ -4,3 +4,9 @@ run:
 	--max-concurrency 1 \
 	--queue-timeout 300 \
 	--queue-size 100
+
+install:
+	pip install -e .
+
+install-dev:
+	pip install -e ".[dev]"

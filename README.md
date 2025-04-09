@@ -64,6 +64,41 @@ python -m app.main \
   --queue-timeout 300 \
   --queue-size 100
 ```
+
+## CLI Usage
+You can also install the package and use the CLI command to launch the server:
+
+### Installation with CLI
+```bash
+pip install -e .
+```
+
+### Using the CLI
+```bash
+mlx-server launch --model-path <path-to-mlx-model> --port 8000
+```
+
+All parameters available in the Python version are also available in the CLI:
+```bash
+mlx-server launch \
+  --model-path mlx-community/gemma-3-4b-it-4bit \
+  --port 8000 \
+  --max-concurrency 1 \
+  --queue-timeout 300 \
+  --queue-size 100
+```
+
+### Getting Help
+```bash
+mlx-server --help
+mlx-server launch --help
+```
+
+### Checking Version
+```bash
+mlx-server --version
+```
+
 ## Request Queue System
 
 The server implements a robust request queue system to prevent overloading the MLX model and ensure fair processing of requests.
@@ -101,7 +136,7 @@ Response example:
 {
   "status": "ok",
   "queue_stats": {
-    "request_queue": {
+    "vision_queue": {
       "running": true,
       "queue_size": 3,
       "max_queue_size": 100,
@@ -255,8 +290,7 @@ curl localhost:8000/v1/chat/completions \
         "role": "user",
         "content": "What is the capital of France?"
       }
-    ],
-    "stream": true
+    ]
   }'
 ```
 
@@ -319,7 +353,7 @@ The server will return responses in OpenAI-compatible format:
 ```
 
 ### Streaming Responses
-For streaming responses, add `"stream": true` to your request. The response will be in Server-Sent Events (SSE) format:
+For streaming responses, add `stream": true` to your request. The response will be in Server-Sent Events (SSE) format:
 
 ```bash
 curl localhost:8000/v1/chat/completions \
