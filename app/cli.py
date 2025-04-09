@@ -2,7 +2,7 @@ import asyncio
 import click
 import uvicorn
 from app.main import setup_server
-from app import __version__
+from app.version import __version__
 
 class Config:
     def __init__(self, model_path, port, host, max_concurrency, queue_timeout, queue_size):
@@ -46,7 +46,7 @@ def cli():
     "--queue-timeout", 
     default=300, 
     type=int, 
-    help="Request queue timeout in seconds"
+    help="Request timeout in seconds"
 )
 @click.option(
     "--queue-size", 
