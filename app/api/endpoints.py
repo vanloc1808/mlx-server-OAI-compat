@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.schemas.openai import ChatCompletionRequest
 from app.utils.errors import create_error_response
+from app.handler.mlx_lm import MLXLMHandler
 
 router = APIRouter()
 
@@ -55,8 +56,23 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
         return JSONResponse(content=create_error_response("Model handler not initialized", "service_unavailable", 503), status_code=503)
     
     try:
-        request.fix_message_order()
-        return await process_vision_request(handler, request) if request.is_vision_request() \
+        
+        # Check if this is a vision request
+        is_vision_request = request.is_vision_request()
+        
+        # If it's a vision request but the handler is MLXLMHandler (text-only), reject it
+        if is_vision_request and isinstance(handler, MLXLMHandler):
+            return JSONResponse(
+                content=create_error_response(
+                    "Vision requests are not supported with text-only models. Use a VLM model type instead.", 
+                    "unsupported_request", 
+                    400
+                ), 
+                status_code=400
+            )
+        
+        # Process the request based on type
+        return await process_vision_request(handler, request) if is_vision_request \
                else await process_text_request(handler, request)
     except Exception as e:
         logger.error(f"Error processing chat completion request: {str(e)}", exc_info=True)

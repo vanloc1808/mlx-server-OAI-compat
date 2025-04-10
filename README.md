@@ -5,6 +5,13 @@ This repository hosts a high-performance proxy server designed to be fully compa
 
 > **Note:** This project currently supports **MacOS with M-series chips** only as it specifically leverages MLX, Apple's framework optimized for Apple Silicon.
 
+## Supported Model Types
+
+The server supports two types of MLX models:
+
+1. **Text-only models** (`--model-type lm`) - Uses the `mlx-lm` library for pure language models
+2. **Vision-language models** (`--model-type vlm`) - Uses the `mlx-vlm` library for multimodal models that can process both text and images
+
 ## Installation
 
 Follow these steps to set up the MLX-powered server:
@@ -47,23 +54,36 @@ To start the MLX server, activate the virtual environment and run the main appli
 source oai-compat-server/bin/activate
 python -m app.main \
   --model-path <path-to-mlx-model> \
+  --model-type <lm|vlm> \
   --max-concurrency 1 \
   --queue-timeout 300 \
   --queue-size 100
 ```
 
 Parameters:
-- `--model-path`: Path to the MLX model directory (supports mlx models only)
+- `--model-path`: Path to the MLX model directory (local path or Hugging Face model repository)
+- `--model-type`: Type of model to run (`lm` for text-only models, `vlm` for vision-language models). Default: `lm`
 - `--max-concurrency`: Maximum number of concurrent requests (default: 1)
 - `--queue-timeout`: Request timeout in seconds (default: 300)
 - `--queue-size`: Maximum queue size for pending requests (default: 100)
 - `--port`: Port to run the server on (default: 8000)
 - `--host`: Host to run the server on (default: 0.0.0.0)
 
-Example:
+Example (Text-only model):
 ```bash
 python -m app.main \
   --model-path mlx-community/gemma-3-4b-it-4bit \
+  --model-type lm \
+  --max-concurrency 1 \
+  --queue-timeout 300 \
+  --queue-size 100
+```
+
+Example (Vision-language model):
+```bash
+python -m app.main \
+  --model-path mlx-community/llava-phi-3-vision-4bit \
+  --model-type vlm \
   --max-concurrency 1 \
   --queue-timeout 300 \
   --queue-size 100
@@ -74,13 +94,14 @@ You can also install the package and use the CLI command to launch the server:
 
 ### Using the CLI
 ```bash
-mlx-server launch --model-path <path-to-mlx-model> --port 8000
+mlx-server launch --model-path <path-to-mlx-model> --model-type <lm|vlm> --port 8000
 ```
 
 All parameters available in the Python version are also available in the CLI:
 ```bash
 mlx-server launch \
   --model-path mlx-community/gemma-3-4b-it-4bit \
+  --model-type lm \
   --port 8000 \
   --max-concurrency 1 \
   --queue-timeout 300 \
@@ -135,13 +156,11 @@ Response example:
 {
   "status": "ok",
   "queue_stats": {
-    "vision_queue": {
-      "running": true,
-      "queue_size": 3,
-      "max_queue_size": 100,
-      "active_requests": 5,
-      "max_concurrency": 2
-    }
+    "running": true,
+    "queue_size": 3,
+    "max_queue_size": 100,
+    "active_requests": 5,
+    "max_concurrency": 2
   }
 }
 ```
@@ -278,28 +297,37 @@ Avg TPS: 95.50
 
 ## API Usage
 
-### Text Request Example
+### Text-Only Model Example
 
 ```bash
 curl localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
+    "model": "gemma-3-4b-it-4bit",
     "messages": [
+      {
+        "role": "system",
+        "content": "You are a helpful assistant." 
+      },
       {
         "role": "user",
         "content": "What is the capital of France?"
       }
-    ]
+    ],
+    "stream": false,
+    "max_tokens": 256,
+    "temperature": 0.7
   }'
 ```
 
-### Vision Request Example
-You can make vision requests to analyze images using the `/v1/chat/completions` endpoint. Here's an example:
+### Vision Model Example
+You can make vision requests to analyze images using the `/v1/chat/completions` endpoint when running with a VLM model:
 
 ```bash
 curl localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
+    "model": "llava-phi-3-vision-4bit",
     "messages": [
       {
         "role": "user",
@@ -316,17 +344,24 @@ curl localhost:8000/v1/chat/completions \
           }
         ]
       }
-    ] 
+    ],
+    "stream": false,
+    "max_tokens": 256 
   }'
 ```
 
+> **Warning:** Make sure you're running the server with `--model-type vlm` when making vision requests. If you send a vision request to a server running with `--model-type lm` (text-only model), you'll receive a 400 error with a message that vision requests are not supported with text-only models.
+
 ### Request Format
+- `model`: Optional model identifier (the server will use the loaded model regardless)
 - `messages`: Array of message objects containing:
   - `role`: The role of the message sender ("user", "assistant", or "system")
-  - `content`: For vision requests, an array of content objects:
-    - `type`: Either "text" or "image_url"
-    - `text`: The text prompt (for type "text")
-    - `image_url`: Object containing the image URL (for type "image_url")
+  - `content`: 
+    - For text models: A string containing the message
+    - For vision models: An array of content objects:
+      - `type`: Either "text" or "image_url"
+      - `text`: The text prompt (for type "text")
+      - `image_url`: Object containing the image URL (for type "image_url")
 - `stream`: Optional boolean to enable streaming responses
 - Additional parameters: `temperature`, `max_tokens`, `top_p`, etc.
 
@@ -343,7 +378,7 @@ The server will return responses in OpenAI-compatible format:
       "index": 0,
       "message": {
         "role": "assistant",
-        "content": "The image shows a wooden boardwalk..."
+        "content": "The capital of France is Paris."
       },
       "finish_reason": "stop"
     }
@@ -352,7 +387,7 @@ The server will return responses in OpenAI-compatible format:
 ```
 
 ### Streaming Responses
-For streaming responses, add `stream": true` to your request. The response will be in Server-Sent Events (SSE) format:
+For streaming responses, add `"stream": true` to your request. The response will be in Server-Sent Events (SSE) format:
 
 ```bash
 curl localhost:8000/v1/chat/completions \
@@ -362,26 +397,40 @@ curl localhost:8000/v1/chat/completions \
     "messages": [
       {
         "role": "user",
-        "content": [
-          {
-            "type": "text",
-            "text": "What is in this image?"
-          },
-          {
-            "type": "image_url",
-            "image_url": {
-              "url": "https://example.com/image.jpg"
-            }
-          }
-        ]
+        "content": "Tell me about Paris"
       }
     ] 
   }'
 ```
 
 ### Multi-turn Conversations
-The API supports multi-turn conversations with images. You can include previous messages in the history:
+The API supports multi-turn conversations for both text-only and vision models:
 
+#### Text-Only Model Example:
+```json
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a helpful assistant."
+    },
+    {
+      "role": "user",
+      "content": "What is the capital of France?"
+    },
+    {
+      "role": "assistant",
+      "content": "The capital of France is Paris."
+    },
+    {
+      "role": "user",
+      "content": "Tell me some interesting facts about it."
+    }
+  ]
+}
+```
+
+#### Vision Model Example:
 ```json
 {
   "messages": [
@@ -467,6 +516,7 @@ We extend our heartfelt gratitude to the following individuals and organizations
 
 ### Core Technologies
 - [MLX team](https://github.com/ml-explore/mlx) for developing the groundbreaking MLX framework, which provides the foundation for efficient machine learning on Apple Silicon
+- [mlx-lm](https://github.com/ml-explore/mlx-lm) for efficient large language models support
 - [mlx-vlm](https://github.com/Blaizzy/mlx-vlm/tree/main) for pioneering multimodal model support within the MLX ecosystem
 - [mlx-community](https://huggingface.co/mlx-community) for curating and maintaining a diverse collection of high-quality MLX models
 

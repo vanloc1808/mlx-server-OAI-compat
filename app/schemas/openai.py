@@ -119,7 +119,6 @@ class ChatCompletionRequest(BaseModel):
     def is_vision_request(self) -> bool:
         """
         Check if the request includes image content, indicating a vision-based request.
-        If so, switch the model to the vision model.
         """
         import logging
         logger = logging.getLogger(__name__)
@@ -131,7 +130,6 @@ class ChatCompletionRequest(BaseModel):
                     if hasattr(item, 'type') and item.type == "image_url":
                         if hasattr(item, 'image_url') and item.image_url and item.image_url.url:
                             logger.debug(f"Detected vision request with image: {item.image_url.url[:30]}...")
-                            self.model = Config.VISION_MODEL    
                             return True
         
         logger.debug(f"No images detected, treating as text-only request")
