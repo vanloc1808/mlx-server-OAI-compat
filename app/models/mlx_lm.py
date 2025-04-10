@@ -1,10 +1,16 @@
+import mlx.core as mx
 from mlx_lm.utils import load
 from mlx_lm.generate import (
     generate,
     stream_generate,
 )
+from mlx_lm.sample_utils import make_sampler
 from typing import List, Dict, Union, Generator
 
+DEFAULT_TEMPERATURE = 0.0
+DEFAULT_TOP_P = 1.0
+DEFAULT_SEED = 0
+DEFAULT_MAX_TOKENS = 256
 
 class MLX_LM:
     """
@@ -33,32 +39,34 @@ class MLX_LM:
             messages (List[Dict[str, str]]): List of messages in the conversation.
             stream (bool): Whether to stream the response.
         """
-        try:
-            if not messages:
-                raise ValueError("Messages must be provided")
-            
-            # Prepare input tokens
-            prompt = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,                
+        # Set default parameters if not provided
+        temperature = kwargs.get("temperature", DEFAULT_TEMPERATURE)
+        top_p = kwargs.get("top_p", DEFAULT_TOP_P)
+        seed = kwargs.get("seed", DEFAULT_SEED)
+
+        mx.random.seed(seed)
+
+        # Prepare input tokens
+        prompt = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,                
+        )
+        if not stream:
+            # Non-streaming mode: return complete response
+            return generate(
+                self.model,
+                self.tokenizer,
+                prompt,
+                sampler = make_sampler(temperature, top_p)
             )
-            if not stream:
-                # Non-streaming mode: return complete response
-                return generate(
-                    self.model,
-                    self.tokenizer,
-                    prompt,
-                    **kwargs
-                )
-            else:
-                # Streaming mode: return generator of chunks
-                return stream_generate(
-                    self.model,
-                    self.tokenizer,
-                    prompt,
-                    **kwargs
-                )
-        except Exception as e:
-            raise ValueError(f"Error generating text: {str(e)}")
+        else:
+            # Streaming mode: return generator of chunks
+            return stream_generate(
+                self.model,
+                self.tokenizer,
+                prompt,
+                sampler = make_sampler(temperature, top_p)
+            )
+       
 
