@@ -84,7 +84,8 @@ async def handle_stream_response(generator, model: str):
             yield f"data: {json.dumps(create_response_chunk(chunk, model))}\n\n"
     except Exception as e:
         logger.error(f"Error in stream wrapper: {str(e)}")
-        yield f"data: {json.dumps({'error': create_error_response(str(e))})}\n\n"
+        error_response = {"error": {"message": str(e), "type": "server_error", "code": 500}}
+        yield f"data: {json.dumps(error_response)}\n\n"
     finally:
         yield f"data: {json.dumps(create_response_chunk('', model, is_final=True))}\n\n"
         yield "data: [DONE]\n\n"
@@ -130,4 +131,9 @@ def format_final_response(content: str, model: str):
     }
 
 def get_id():
-    return f"chatcmpl-{int(time.time())}{random.randint(0, 10000)}"
+    """
+    Generate a unique ID for chat completions with timestamp and random component.
+    """
+    timestamp = int(time.time())
+    random_suffix = random.randint(0, 999999)
+    return f"chatcmpl-{timestamp}{random_suffix:06d}"

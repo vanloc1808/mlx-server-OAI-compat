@@ -1,4 +1,4 @@
-from typing import List, Dict, Union, Generator, Any
+from typing import List, Dict, Union, Generator
 from mlx_vlm import load
 from mlx_vlm.prompt_utils import apply_chat_template
 from mlx_vlm.utils import load_config, generate, stream_generate
@@ -87,63 +87,3 @@ class MLX_VLM:
                 images,
                 **model_params
             )
-
-if __name__ == "__main__":
-    # Example usage
-    import time
-    import sys
-    
-    def test_model():
-        try:
-            # Initialize model
-            model = MLX_VLM("checkpoints")
-            
-            # Prepare test data
-            test_image = "test.jpg"
-            test_messages = [
-                {"role": "user", "content": "What is the main color of the image?"}
-            ]
-            
-            # Test streaming mode
-            print("Testing streaming mode:")
-            start_time = time.time()
-            
-            response = model(
-                messages=test_messages,
-                stream=True
-            )
-            
-            # Process streaming response
-            for chunk in response:
-                if chunk:
-                    if hasattr(chunk, 'text'):
-                        sys.stdout.write(chunk.text)
-                    elif isinstance(chunk, str):
-                        sys.stdout.write(chunk)
-                    else:
-                        sys.stdout.write(str(chunk))
-                    sys.stdout.flush()
-            
-            end_time = time.time()
-            print(f"\nStreaming completed in {end_time - start_time:.2f} seconds")
-            
-            # Test non-streaming mode
-            print("\nTesting non-streaming mode:")
-            start_time = time.time()
-            
-            response = model(
-                images=[test_image],
-                messages=test_messages,
-                stream=False
-            )
-            
-            print(response)
-            end_time = time.time()
-            print(f"Non-streaming completed in {end_time - start_time:.2f} seconds")
-            
-        except FileNotFoundError:
-            print(f"Error: Test image '{test_image}' not found")
-        except Exception as e:
-            print(f"Error during model execution: {str(e)}")
-    
-    test_model()
