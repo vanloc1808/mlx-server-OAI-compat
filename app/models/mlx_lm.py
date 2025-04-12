@@ -49,7 +49,6 @@ class MLX_LM:
         # Prepare input tokens
         prompt = self.tokenizer.apply_chat_template(
             messages,
-            tokenize=False,
             add_generation_prompt=True,                
         )
         if not stream:
