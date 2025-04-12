@@ -10,8 +10,10 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.handler.mlx_vlm import MLXHandler
+from app.handler.mlx_vlm import MLXVLMHandler
+from app.handler.mlx_lm import MLXLMHandler 
 from app.api.endpoints import router
+from app.version import __version__
 
 # Configure logging
 logging.basicConfig(
@@ -23,10 +25,11 @@ logger = logging.getLogger(__name__)
 def parse_args():
     parser = argparse.ArgumentParser(description="OAI-compatible proxy")
     parser.add_argument("--model-path", type=str, required=True, help="Huggingface model repo or local path")
+    parser.add_argument("--model-type", type=str, default="lm", choices=["lm", "vlm"], help="Model type")
     parser.add_argument("--port", type=int, default=8000, help="Port to run the server on")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to run the server on")
     parser.add_argument("--max-concurrency", type=int, default=1, help="Maximum number of concurrent requests")
-    parser.add_argument("--queue-timeout", type=int, default=300, help="Request queue timeout in seconds")
+    parser.add_argument("--queue-timeout", type=int, default=300, help="Request timeout in seconds")
     parser.add_argument("--queue-size", type=int, default=100, help="Maximum queue size for pending requests")
     return parser.parse_args()
 
@@ -37,10 +40,16 @@ def create_lifespan(config_args):
     async def lifespan(app: FastAPI):
         try:
             logger.info(f"Initializing MLX handler with model path: {config_args.model_path}")
-            handler = MLXHandler(
-                model_path=config_args.model_path,
-                max_concurrency=config_args.max_concurrency
-            )
+            if config_args.model_type == "vlm":
+                handler = MLXVLMHandler(
+                    model_path=config_args.model_path,
+                    max_concurrency=config_args.max_concurrency
+                )
+            else:
+                handler = MLXLMHandler(
+                    model_path=config_args.model_path,
+                    max_concurrency=config_args.max_concurrency
+                )       
             # Initialize queue
             await handler.initialize({
                 "max_concurrency": config_args.max_concurrency,
@@ -53,13 +62,17 @@ def create_lifespan(config_args):
             logger.error(f"Failed to initialize MLX handler: {str(e)}")
             raise
         gc.collect()
-        gc.freeze()
         yield
         # Shutdown
         logger.info("Shutting down application")
-        if app.state.handler:
-            # Ensure queue is stopped
-            await app.state.handler.request_queue.stop()
+        if hasattr(app.state, "handler") and app.state.handler:
+            try:
+                # Ensure queue is stopped
+                logger.info("Stopping request queue")
+                await app.state.handler.request_queue.stop()
+                logger.info("Request queue stopped")
+            except Exception as e:
+                logger.error(f"Error during shutdown: {str(e)}")
     
     return lifespan
 
@@ -73,7 +86,7 @@ async def setup_server(args) -> uvicorn.Config:
     app = FastAPI(
         title="OpenAI-compatible API",
         description="API for OpenAI-compatible chat completion and text embedding",
-        version="0.1",
+        version=__version__,
         lifespan=create_lifespan(args)
     )
     

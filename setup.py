@@ -9,6 +9,7 @@ setup(
     author="MLX Server Team",
     packages=find_packages(),
     install_requires=[
+        "mlx-lm",
         "mlx-vlm",
         "fastapi",
         "uvicorn",

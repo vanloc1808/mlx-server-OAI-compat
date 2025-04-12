@@ -11,8 +11,9 @@ from app.main import setup_server
 
 class Config:
     """Configuration container for server parameters."""
-    def __init__(self, model_path, port, host, max_concurrency, queue_timeout, queue_size):
+    def __init__(self, model_path, model_type, port, host, max_concurrency, queue_timeout, queue_size):
         self.model_path = model_path
+        self.model_type = model_type
         self.port = port
         self.host = host
         self.max_concurrency = max_concurrency
@@ -53,10 +54,11 @@ def cli():
 
 
 @lru_cache(maxsize=1)
-def get_server_config(model_path, port, host, max_concurrency, queue_timeout, queue_size):
+def get_server_config(model_path, model_type, port, host, max_concurrency, queue_timeout, queue_size):
     """Cache and return server configuration to avoid redundant processing."""
     return Config(
         model_path=model_path,
+        model_type=model_type,
         port=port,
         host=host,
         max_concurrency=max_concurrency,
@@ -71,6 +73,7 @@ def print_startup_banner(args):
     logger.info(f"✨ MLX Server v{__version__} Starting ✨")
     logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     logger.info(f"🔮 Model: {args.model_path}")
+    logger.info(f"🔮 Model Type: {args.model_type}")
     logger.info(f"🌐 Host: {args.host}")
     logger.info(f"🔌 Port: {args.port}")
     logger.info(f"⚡ Max Concurrency: {args.max_concurrency}")
@@ -84,6 +87,12 @@ def print_startup_banner(args):
     "--model-path", 
     required=True, 
     help="Path to the model"
+)
+@click.option(
+    "--model-type",
+    default="lm",
+    type=click.Choice(["lm", "vlm"]),
+    help="Type of model to run"
 )
 @click.option(
     "--port", 
@@ -114,11 +123,11 @@ def print_startup_banner(args):
     type=int, 
     help="Maximum queue size for pending requests"
 )
-def launch(model_path, port, host, max_concurrency, queue_timeout, queue_size):
+def launch(model_path, model_type, port, host, max_concurrency, queue_timeout, queue_size):
     """Launch the MLX server with the specified model."""
     try:
         # Get optimized configuration
-        args = get_server_config(model_path, port, host, max_concurrency, queue_timeout, queue_size)
+        args = get_server_config(model_path, model_type, port, host, max_concurrency, queue_timeout, queue_size)
         
         # Display startup information
         print_startup_banner(args)

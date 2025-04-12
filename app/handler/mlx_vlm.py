@@ -25,7 +25,7 @@ from app.schemas.openai import ChatCompletionRequest
 # Configure logging
 logger = logging.getLogger(__name__)
 
-class MLXHandler:
+class MLXVLMHandler:
     """
     Handler class for making requests to the underlying MLX vision-language model service.
     Provides caching, concurrent image processing, and robust error handling.

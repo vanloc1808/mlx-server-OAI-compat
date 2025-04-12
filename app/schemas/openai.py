@@ -119,7 +119,6 @@ class ChatCompletionRequest(BaseModel):
     def is_vision_request(self) -> bool:
         """
         Check if the request includes image content, indicating a vision-based request.
-        If so, switch the model to the vision model.
         """
         import logging
         logger = logging.getLogger(__name__)
@@ -131,40 +130,7 @@ class ChatCompletionRequest(BaseModel):
                     if hasattr(item, 'type') and item.type == "image_url":
                         if hasattr(item, 'image_url') and item.image_url and item.image_url.url:
                             logger.debug(f"Detected vision request with image: {item.image_url.url[:30]}...")
-                            self.model = Config.VISION_MODEL    
                             return True
         
         logger.debug(f"No images detected, treating as text-only request")
         return False
-
-    def fix_message_order(self) -> None:
-        """
-        Ensure that messages alternate between 'user' and 'assistant' roles.
-        If consecutive messages have the same role, insert a dummy message with the opposite role.
-        """
-        if not self.messages:
-            return
-            
-        fixed_messages = []
-        last_role = None
-        
-        for msg in self.messages:
-            if isinstance(msg.content, list):
-                # Nothing to do for text + image messages
-                fixed_messages.append(msg)
-                continue
-        
-            role = msg.role.strip().lower()
-            content = msg.content.strip()
-            
-            # Insert opposite role if needed
-            if (last_role in ("user", "assistant")) and role == last_role:
-                fixed_messages.append(Message(
-                    role="assistant" if last_role == "user" else "user",
-                    content=""
-                ))
-            
-            fixed_messages.append(Message(role=role, content=content))
-            last_role = role
-            
-        self.messages = fixed_messages

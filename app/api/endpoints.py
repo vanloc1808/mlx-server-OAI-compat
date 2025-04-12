@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.schemas.openai import ChatCompletionRequest
 from app.utils.errors import create_error_response
+from app.handler.mlx_lm import MLXLMHandler
 
 router = APIRouter()
 
@@ -55,8 +56,23 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
         return JSONResponse(content=create_error_response("Model handler not initialized", "service_unavailable", 503), status_code=503)
     
     try:
-        request.fix_message_order()
-        return await process_vision_request(handler, request) if request.is_vision_request() \
+        
+        # Check if this is a vision request
+        is_vision_request = request.is_vision_request()
+        
+        # If it's a vision request but the handler is MLXLMHandler (text-only), reject it
+        if is_vision_request and isinstance(handler, MLXLMHandler):
+            return JSONResponse(
+                content=create_error_response(
+                    "Vision requests are not supported with text-only models. Use a VLM model type instead.", 
+                    "unsupported_request", 
+                    400
+                ), 
+                status_code=400
+            )
+        
+        # Process the request based on type
+        return await process_vision_request(handler, request) if is_vision_request \
                else await process_text_request(handler, request)
     except Exception as e:
         logger.error(f"Error processing chat completion request: {str(e)}", exc_info=True)
@@ -84,7 +100,8 @@ async def handle_stream_response(generator, model: str):
             yield f"data: {json.dumps(create_response_chunk(chunk, model))}\n\n"
     except Exception as e:
         logger.error(f"Error in stream wrapper: {str(e)}")
-        yield f"data: {json.dumps({'error': create_error_response(str(e))})}\n\n"
+        error_response = {"error": {"message": str(e), "type": "server_error", "code": 500}}
+        yield f"data: {json.dumps(error_response)}\n\n"
     finally:
         yield f"data: {json.dumps(create_response_chunk('', model, is_final=True))}\n\n"
         yield "data: [DONE]\n\n"
@@ -130,4 +147,9 @@ def format_final_response(content: str, model: str):
     }
 
 def get_id():
-    return f"chatcmpl-{int(time.time())}{random.randint(0, 10000)}"
+    """
+    Generate a unique ID for chat completions with timestamp and random component.
+    """
+    timestamp = int(time.time())
+    random_suffix = random.randint(0, 999999)
+    return f"chatcmpl-{timestamp}{random_suffix:06d}"
