@@ -39,12 +39,36 @@ class ImageProcessor:
                 return cached_path
 
             if image_url.startswith("data:"):
-                header, encoded = image_url.split(",", 1)
-                data = base64.b64decode(encoded)
-                image = Image.open(BytesIO(data))
+                try:
+                    header, encoded = image_url.split(",", 1)
+                    data = base64.b64decode(encoded)
+                    
+                    # Additional logging for debugging
+                    logger.debug(f"Base64 image header: {header}")
+                    logger.debug(f"Decoded data length: {len(data)} bytes")
+                    
+                    try:
+                        image = Image.open(BytesIO(data))
+                    except Exception as img_error:
+                        logger.error(f"Failed to open image from base64 data: {str(img_error)}")
+                        # Try to infer format from header
+                        if "image/jpeg" in header:
+                            logger.info("Trying to force JPEG format")
+                            # Ensure data is properly formatted for JPEG
+                            from PIL import ImageFile
+                            ImageFile.LOAD_TRUNCATED_IMAGES = True
+                            image = Image.open(BytesIO(data))
+                        elif "image/png" in header:
+                            logger.info("Trying to force PNG format")
+                            image = Image.open(BytesIO(data))
+                        else:
+                            raise ValueError(f"Unsupported or invalid image format in base64 data: {header}")
+                except Exception as base64_error:
+                    logger.error(f"Base64 decoding error: {str(base64_error)}")
+                    raise ValueError(f"Invalid base64 image data: {str(base64_error)}")
             else:
                 headers = {
-                    "User-Agent": "proxy-OAI-compat/1.0 (https://github.com/vuonggiahuy/proxy-OAI-compat; your-email@example.com) Python-Requests"
+                    "User-Agent": "mlx-server-OAI-compat/1.0 (https://github.com/cubist38/mlx-server-OAI-compat; cubist38@gmail.com) Python-Requests"
                 }
                 response = self._connection.get(image_url, headers=headers, timeout=10)
                 response.raise_for_status()
