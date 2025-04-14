@@ -6,7 +6,7 @@ setup(
     name="mlx-server",
     version=__version__,
     description="OpenAI-compatible server for MLX models",
-    author="MLX Server Team",
+    author="Huy Vuong",
     packages=find_packages(),
     install_requires=[
         "mlx-lm",
