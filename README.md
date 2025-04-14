@@ -1,9 +1,17 @@
 # mlx-server-OAI-compat
 
 ## Description
-This repository hosts a high-performance proxy server designed to be fully compatible with the OAI-compat protocol, specifically tailored for MLX models. Developed using Python and powered by the FastAPI framework, it provides an efficient, scalable, and user-friendly solution for handling MLX-based vision and language model inference requests.
+This repository hosts a high-performance API server that provides OpenAI-compatible endpoints for MLX models. Developed using Python and powered by the FastAPI framework, it provides an efficient, scalable, and user-friendly solution for running MLX-based vision and language models locally with an OpenAI-compatible interface.
 
 > **Note:** This project currently supports **MacOS with M-series chips** only as it specifically leverages MLX, Apple's framework optimized for Apple Silicon.
+
+## OpenAI Compatibility
+
+This server implements the OpenAI API interface, allowing you to use it as a drop-in replacement for OpenAI's services in your applications. It supports:
+- Chat completions (both streaming and non-streaming)
+- Vision-language model interactions
+- Standard OpenAI request/response formats
+- Common OpenAI parameters (temperature, top_p, etc.)
 
 ## Supported Model Types
 
@@ -16,8 +24,10 @@ The server supports two types of MLX models:
 
 Follow these steps to set up the MLX-powered server:
 
-### Native Python Recommendation
-We recommend using a native Python version (supporting ARM architecture). The development environment for this project uses Python `3.11`.
+### Prerequisites
+- MacOS with Apple Silicon (M-series) chip
+- Python 3.11 or later (native ARM version)
+- pip package manager
 
 ### Setup Steps
 1. Create a virtual environment for the project:
@@ -30,12 +40,14 @@ We recommend using a native Python version (supporting ARM architecture). The de
     source oai-compat-server/bin/activate
     ```
 
-3. Install the required Python dependencies:
+3. Install the package:
     ```bash
+    # Option 1: Install directly from GitHub
     pip install git+https://github.com/cubist38/mlx-server-OAI-compat.git
-    ```
-    or 
-    ```
+    
+    # Option 2: Clone and install in development mode
+    git clone https://github.com/cubist38/mlx-server-OAI-compat.git
+    cd mlx-server-OAI-compat
     pip install -e .
     ```
 
@@ -49,6 +61,9 @@ python -c "import platform; print(platform.processor())"
 If the output is `i386` (on an M-series machine), you are using a non-native Python. Switch to a native Python version. A good approach is to use [Conda](https://stackoverflow.com/questions/65415996/how-to-specify-the-architecture-or-platform-for-a-new-conda-environment-apple).
 
 ## Usage
+
+### Starting the Server
+
 To start the MLX server, activate the virtual environment and run the main application file:
 ```bash
 source oai-compat-server/bin/activate
@@ -60,7 +75,7 @@ python -m app.main \
   --queue-size 100
 ```
 
-Parameters:
+#### Server Parameters
 - `--model-path`: Path to the MLX model directory (local path or Hugging Face model repository)
 - `--model-type`: Type of model to run (`lm` for text-only models, `vlm` for vision-language models). Default: `lm`
 - `--max-concurrency`: Maximum number of concurrent requests (default: 1)
@@ -69,7 +84,9 @@ Parameters:
 - `--port`: Port to run the server on (default: 8000)
 - `--host`: Host to run the server on (default: 0.0.0.0)
 
-Example (Text-only model):
+#### Example Configurations
+
+Text-only model:
 ```bash
 python -m app.main \
   --model-path mlx-community/gemma-3-4b-it-4bit \
@@ -79,7 +96,7 @@ python -m app.main \
   --queue-size 100
 ```
 
-Example (Vision-language model):
+Vision-language model:
 ```bash
 python -m app.main \
   --model-path mlx-community/llava-phi-3-vision-4bit \
@@ -89,10 +106,67 @@ python -m app.main \
   --queue-size 100
 ```
 
-## CLI Usage
-You can also install the package and use the CLI command to launch the server:
+### Using the API
 
-### Using the CLI
+The server provides OpenAI-compatible endpoints that you can use with standard OpenAI client libraries. Here are some examples:
+
+#### Text Completion
+```python
+import openai
+
+client = openai.OpenAI(
+    base_url="http://localhost:8000/v1",
+    api_key="not-needed"  # API key is not required for local server
+)
+
+response = client.chat.completions.create(
+    model="local-model",  # Model name doesn't matter for local server
+    messages=[
+        {"role": "user", "content": "What is the capital of France?"}
+    ],
+    temperature=0.7
+)
+print(response.choices[0].message.content)
+```
+
+#### Vision-Language Model
+```python
+import openai
+import base64
+
+client = openai.OpenAI(
+    base_url="http://localhost:8000/v1",
+    api_key="not-needed"
+)
+
+# Load and encode image
+with open("image.jpg", "rb") as image_file:
+    base64_image = base64.b64encode(image_file.read()).decode('utf-8')
+
+response = client.chat.completions.create(
+    model="local-vlm",  # Model name doesn't matter for local server
+    messages=[
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "What's in this image?"},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{base64_image}"
+                    }
+                }
+            ]
+        }
+    ]
+)
+print(response.choices[0].message.content)
+```
+
+### CLI Usage
+
+You can also use the provided CLI command to launch the server:
+
 ```bash
 mlx-server launch --model-path <path-to-mlx-model> --model-type <lm|vlm> --port 8000
 ```
@@ -108,50 +182,50 @@ mlx-server launch \
   --queue-size 100
 ```
 
-### Getting Help
+#### CLI Commands
 ```bash
+# Get help
 mlx-server --help
 mlx-server launch --help
-```
 
-### Checking Version
-```bash
+# Check version
 mlx-server --version
 ```
 
 ## Request Queue System
 
-The server implements a robust request queue system to prevent overloading the MLX model and ensure fair processing of requests.
+The server implements a robust request queue system to manage and optimize MLX model inference requests. This system ensures efficient resource utilization and fair request processing.
 
 ### Key Features
 
-- **Concurrency control**: Limits the number of simultaneous MLX model inferences
-- **Queuing**: Handles pending requests in a fair, first-come-first-served manner
-- **Timeout handling**: Automatically fails requests that exceed the configured timeout
-- **Status monitoring**: Provides endpoints to monitor queue status
+- **Concurrency Control**: Limits the number of simultaneous model inferences to prevent resource exhaustion
+- **Request Queuing**: Implements a fair, first-come-first-served queue for pending requests
+- **Timeout Management**: Automatically handles requests that exceed the configured timeout
+- **Real-time Monitoring**: Provides endpoints to monitor queue status and performance metrics
 
 ### Architecture
 
 The queue system consists of two main components:
 
-1. **RequestQueue**: A generic async queue implementation that:
-   - Manages a queue of pending requests
-   - Controls concurrent execution with a semaphore
-   - Handles timeouts and errors
-   - Provides statistics about queue status
+1. **RequestQueue**: An asynchronous queue implementation that:
+   - Manages pending requests with configurable queue size
+   - Controls concurrent execution using semaphores
+   - Handles timeouts and errors gracefully
+   - Provides real-time queue statistics
 
-2. **MLXHandler integration**: The service maintains dedicated queues for efficient processing of MLX model requests (both vision and text)
+2. **Model Handlers**: Specialized handlers for different model types:
+   - `MLXLMHandler`: Manages text-only model requests
+   - `MLXVLMHandler`: Manages vision-language model requests
 
-### Monitoring
+### Queue Monitoring
 
-The service provides an endpoint to monitor queue statistics:
+Monitor queue statistics using the `/v1/queue/stats` endpoint:
 
 ```bash
 curl http://localhost:8000/v1/queue/stats
 ```
 
-Response example:
-
+Example response:
 ```json
 {
   "status": "ok",
@@ -167,46 +241,56 @@ Response example:
 
 ### Error Handling
 
-When the queue is full, the server returns a 429 error:
+The queue system handles various error conditions:
 
+1. **Queue Full (429)**: When the queue reaches its maximum size
 ```json
 {
   "detail": "Too many requests. Service is at capacity."
 }
 ```
 
-When a request times out, an exception is raised in the client's response.
+2. **Request Timeout**: When a request exceeds the configured timeout
+```json
+{
+  "detail": "Request processing timed out after 300 seconds"
+}
+```
 
-### Implementation Notes
-
-- Streaming requests are handled efficiently to leverage MLX's generation capabilities
-- Both vision and text requests are fully supported through the MLX interface
-- Each request gets a unique ID for tracking and debugging
-- Queue statistics are updated in real-time
-- Model loading is optimized for MLX's architecture
+3. **Model Errors**: When the model encounters an error during inference
+```json
+{
+  "detail": "Failed to generate response: <error message>"
+}
+```
 
 ## Performance Monitoring
 
-The server includes comprehensive performance monitoring and benchmarking capabilities to help track and optimize MLX model performance.
+The server includes comprehensive performance monitoring to help track and optimize model performance.
 
 ### Key Features
 
-- **Token Per Second (TPS) Tracking**: Real-time monitoring of MLX model generation speed
-- **Detailed Request Metrics**: Per-request statistics including token counts, word counts, and processing time
-- **Historical Performance Data**: Maintains history of recent requests for trend analysis
-- **Request Type Breakdown**: Separate metrics for different types of requests (vision/text, streaming/non-streaming)
-- **Robust Error Handling**: Fault-tolerant metrics collection with fallbacks for missing data
+- **Token Generation Speed**: Real-time tracking of tokens per second (TPS)
+- **Request Metrics**: Detailed statistics for each request:
+  - Token counts
+  - Word counts
+  - Processing time
+  - Success/failure rates
+- **Performance History**: Maintains historical data for trend analysis
+- **Request Type Analysis**: Separate metrics for different request types:
+  - Vision vs. text requests
+  - Streaming vs. non-streaming requests
+- **Error Tracking**: Monitors and categorizes different types of errors
 
-### Metrics Endpoint
+### Performance Metrics
 
-The `/v1/queue/stats` endpoint now provides enhanced performance metrics:
+Access detailed performance metrics through the `/v1/queue/stats` endpoint:
 
 ```bash
 curl http://localhost:8000/v1/queue/stats
 ```
 
-Response example:
-
+Example response with performance data:
 ```json
 {
   "status": "ok",
@@ -240,60 +324,17 @@ Response example:
 
 ### Metrics System Design
 
-The performance metrics system is designed with robustness in mind:
+The performance metrics system is designed for reliability and accuracy:
 
-1. **Consistent Metrics Keys**: All request handlers use a standardized format for metrics
-2. **Fault Tolerance**: The system uses fallbacks when processing metrics data:
+1. **Standardized Metrics**: All request handlers use a consistent metrics format
+2. **Fault Tolerance**: The system includes fallbacks for missing data:
    ```python
-   # Using get() with defaults for safety
+   # Example of safe metrics access
    self.metrics["total_tokens"] += metrics.get("token_count", metrics.get("estimated_tokens", 0))
    ```
-3. **Key Normalization**: The system automatically maps between different key formats:
-   - `estimated_tokens` from token estimator
-   - `token_count` for metrics system
-4. **Error Resilience**: The metrics system continues functioning even if one component fails
-
-### Metrics Details
-
-The performance metrics include:
-
-- **Request Statistics**:
-  - Total number of requests processed
-  - Breakdown by request type (vision/text, streaming/non-streaming)
-  - Total tokens generated
-  - Total processing time
-
-- **Performance Metrics**:
-  - Average Tokens Per Second (TPS)
-  - Maximum TPS observed
-  - Minimum TPS observed
-  - Number of recent requests in history
-
-- **Error Tracking**:
-  - Total number of errors encountered
-  - Error rate calculation
-
-### Token Estimation
-
-The server uses sophisticated token estimation methods:
-
-- Word-based estimation (words/1.3)
-- Character-based estimation (chars/4)
-- Combined average for improved accuracy
-
-This provides more accurate performance metrics for benchmarking and optimization.
-
-### Logging
-
-Detailed performance logs are available in the server logs:
-
-```
-Request completed: vision_stream
-Tokens: 150 (words: 75, chars: 450)
-Time: 1.50s
-TPS: 100.00
-Avg TPS: 95.50
-```
+3. **Real-time Updates**: Metrics are updated as requests are processed
+4. **Historical Tracking**: Maintains a history of recent requests for trend analysis
+5. **Error Resilience**: Continues operating even if some metrics fail to collect
 
 ## API Usage
 
