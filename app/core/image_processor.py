@@ -51,6 +51,21 @@ class ImageProcessor:
         
         return image.resize((new_width, new_height), Image.Resampling.LANCZOS)
     
+    def _prepare_image_for_saving(self, image: Image.Image) -> Image.Image:
+        """Convert image to RGB mode if necessary before saving as JPEG."""
+        if image.mode in ('RGBA', 'LA'):
+            # Create a white background
+            background = Image.new('RGB', image.size, (255, 255, 255))
+            # Paste using alpha channel as mask
+            if image.mode == 'RGBA':
+                background.paste(image, mask=image.split()[3])
+            else:
+                background.paste(image, mask=image.split()[1])
+            return background
+        elif image.mode != 'RGB':
+            return image.convert('RGB')
+        return image
+
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(
@@ -75,7 +90,6 @@ class ImageProcessor:
 
     async def _process_single_image(self, image_url: str) -> str:
         try:
-
             image_hash = self._get_image_hash(image_url)
             cached_path = os.path.join(self.temp_dir, f"{image_hash}.jpg")
 
@@ -87,6 +101,7 @@ class ImageProcessor:
             if os.path.exists(image_url):
                 image = Image.open(image_url)
                 image = self._resize_image_keep_aspect_ratio(image)
+                image = self._prepare_image_for_saving(image)
                 image.save(cached_path, 'JPEG', quality=100, optimize=True)
                 return cached_path
 
@@ -117,6 +132,7 @@ class ImageProcessor:
                     image = Image.open(BytesIO(data))
 
             image = self._resize_image_keep_aspect_ratio(image)
+            image = self._prepare_image_for_saving(image)
             image.save(cached_path, 'JPEG', quality=100, optimize=True)
             
             # Cleanup old files periodically
