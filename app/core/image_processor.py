@@ -6,85 +6,122 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from io import BytesIO
-from typing import List
-
-import requests
+from typing import List, Optional
+from urllib3 import PoolManager
 from PIL import Image
+import aiohttp
+import time
 
 logger = logging.getLogger(__name__)
 
 class ImageProcessor:
-    def __init__(self, temp_dir: str, max_workers: int = 4):
+    def __init__(self, temp_dir: str, max_workers: int = 4, cache_size: int = 1000):
         self.temp_dir = temp_dir
-        self._connection = requests.Session()
+        self._http_pool = PoolManager(maxsize=10, retries=3)
+        self._session: Optional[aiohttp.ClientSession] = None
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self._cache_size = cache_size
+        self._last_cleanup = time.time()
+        self._cleanup_interval = 3600  # 1 hour
+        
+        # Ensure temp directory exists
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        # Configure PIL for better performance
+        Image.MAX_IMAGE_PIXELS = None  # Disable maximum image size check
+        Image.warnings.simplefilter('ignore', Image.DecompressionBombWarning)
 
-    @lru_cache(maxsize=100)
+    @lru_cache(maxsize=1000)
     def _get_image_hash(self, image_url: str) -> str:
         if image_url.startswith("data:"):
             _, encoded = image_url.split(",", 1)
             data = base64.b64decode(encoded)
         else:
-            # since image_url is a unique identifier, we can use it as the hash
             data = image_url.encode('utf-8')
         return hashlib.md5(data).hexdigest()
+    
+    def _resize_image_keep_aspect_ratio(self, image: Image.Image, max_size: int = 768) -> Image.Image:
+        width, height = image.size
+        if width > height:
+            new_width = max_size
+            new_height = int(height * max_size / width)
+        else:
+            new_height = max_size
+            new_width = int(width * max_size / height)
+        
+        return image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+    
+    async def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=30),
+                headers={
+                    "User-Agent": "mlx-server-OAI-compat/1.0 (https://github.com/cubist38/mlx-server-OAI-compat; cubist38@gmail.com) Python-Requests"
+                }
+            )
+        return self._session
 
-    def _process_single_image(self, image_url: str) -> str:
+    def _cleanup_old_files(self):
+        current_time = time.time()
+        if current_time - self._last_cleanup > self._cleanup_interval:
+            try:
+                for file in os.listdir(self.temp_dir):
+                    file_path = os.path.join(self.temp_dir, file)
+                    if os.path.getmtime(file_path) < current_time - self._cleanup_interval:
+                        os.remove(file_path)
+                self._last_cleanup = current_time
+            except Exception as e:
+                logger.warning(f"Failed to clean up old files: {str(e)}")
+
+    async def _process_single_image(self, image_url: str) -> str:
         try:
+
             image_hash = self._get_image_hash(image_url)
             cached_path = os.path.join(self.temp_dir, f"{image_hash}.jpg")
 
             if os.path.exists(cached_path):
                 logger.debug(f"Using cached image: {cached_path}")
                 return cached_path
+            
+            # check if image_url is a local file
+            if os.path.exists(image_url):
+                image = Image.open(image_url)
+                image = self._resize_image_keep_aspect_ratio(image)
+                image.save(cached_path, 'JPEG', quality=100, optimize=True)
+                return cached_path
 
-            if image_url.startswith("data:"):
+            elif image_url.startswith("data:"):
                 try:
                     header, encoded = image_url.split(",", 1)
                     data = base64.b64decode(encoded)
-                    
-                    # Additional logging for debugging
-                    logger.debug(f"Base64 image header: {header}")
-                    logger.debug(f"Decoded data length: {len(data)} bytes")
                     
                     try:
                         image = Image.open(BytesIO(data))
                     except Exception as img_error:
                         logger.error(f"Failed to open image from base64 data: {str(img_error)}")
-                        # Try to infer format from header
                         if "image/jpeg" in header:
-                            logger.info("Trying to force JPEG format")
-                            # Ensure data is properly formatted for JPEG
                             from PIL import ImageFile
                             ImageFile.LOAD_TRUNCATED_IMAGES = True
                             image = Image.open(BytesIO(data))
                         elif "image/png" in header:
-                            logger.info("Trying to force PNG format")
                             image = Image.open(BytesIO(data))
                         else:
-                            raise ValueError(f"Unsupported or invalid image format in base64 data: {header}")
+                            raise ValueError(f"Unsupported image format: {header}")
                 except Exception as base64_error:
-                    logger.error(f"Base64 decoding error: {str(base64_error)}")
                     raise ValueError(f"Invalid base64 image data: {str(base64_error)}")
             else:
-                headers = {
-                    "User-Agent": "mlx-server-OAI-compat/1.0 (https://github.com/cubist38/mlx-server-OAI-compat; cubist38@gmail.com) Python-Requests"
-                }
-                response = self._connection.get(image_url, headers=headers, timeout=10)
-                response.raise_for_status()
-                image = Image.open(BytesIO(response.content))
+                session = await self._get_session()
+                async with session.get(image_url) as response:
+                    response.raise_for_status()
+                    data = await response.read()
+                    image = Image.open(BytesIO(data))
 
-            # Optimize image before saving
-            if image.mode in ('RGBA', 'LA'):
-                background = Image.new('RGB', image.size, (255, 255, 255))
-                background.paste(image, mask=image.split()[-1])
-                image = background
-            elif image.mode != 'RGB':
-                image = image.convert('RGB')
-
-            # Save with optimization
+            image = self._resize_image_keep_aspect_ratio(image)
             image.save(cached_path, 'JPEG', quality=100, optimize=True)
-            logger.debug(f"Saved processed image: {cached_path}")
+            
+            # Cleanup old files periodically
+            self._cleanup_old_files()
+            
             return cached_path
 
         except Exception as e:
@@ -92,17 +129,19 @@ class ImageProcessor:
             raise ValueError(f"Failed to process image: {str(e)}")
 
     async def process_image_url(self, image_url: str) -> str:
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self.executor, self._process_single_image, image_url)
+        return await self._process_single_image(image_url)
 
     async def process_image_urls(self, image_urls: List[str]) -> List[str]:
         tasks = [self.process_image_url(url) for url in image_urls]
-        return await asyncio.gather(*tasks)
+        return await asyncio.gather(*tasks, return_exceptions=True)
 
-    def cleanup(self):
+    async def cleanup(self):
         """Cleanup resources."""
+        if self._session and not self._session.closed:
+            await self._session.close()
         self.executor.shutdown(wait=True)
-        self._connection.close()
+        self._http_pool.clear()
+        
         try:
             # Clean up temp directory
             for file in os.listdir(self.temp_dir):
