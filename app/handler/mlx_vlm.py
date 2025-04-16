@@ -498,7 +498,7 @@ class MLXVLMHandler:
             logger.error(f"Failed to prepare text request: {str(e)}")
             raise HTTPException(status_code=400, detail=f"Failed to process request: {str(e)}")
 
-    async def _prepare_vision_request(self, request: ChatCompletionRequest) -> Tuple[List[Dict[str, str]], List[str], Dict[str, Any]]:
+    async def _prepare_vision_request(self, request: ChatCompletionRequest) -> Tuple[List[Dict[str, Any]], List[str], Dict[str, Any]]:
         """
         Prepare the vision request by processing messages and images.
         
@@ -512,7 +512,7 @@ class MLXVLMHandler:
             request (ChatCompletionRequest): The incoming request containing messages and parameters.
             
         Returns:
-            Tuple[List[Dict[str, str]], List[str], Dict[str, Any]]: A tuple containing:
+            Tuple[List[Dict[str, Any]], List[str], Dict[str, Any]]: A tuple containing:
                 - List of processed chat messages
                 - List of processed image paths
                 - Dictionary of model parameters
@@ -523,91 +523,105 @@ class MLXVLMHandler:
         chat_messages = []
         image_urls = []
 
-        def format_message(role, content):
-            """Simple helper to format message with consistent structure"""
-            return {"role": role, "content": content}
-
-        def handle_list_with_image(prompt, role, num_images, skip_image_token=False):
-            """Format message with proper image token handling"""
-            content = [{"type": "text", "text": prompt}]
-            if role == "user" and not skip_image_token:
-                content.extend([{"type": "image"}] * num_images)
-            return {"role": role, "content": content}
-
         try:
+            # Process each message in the request
             for i, message in enumerate(request.messages):
                 is_last_message = i == len(request.messages) - 1
                 
                 # Handle system and assistant messages (simple text content)
                 if message.role in ["system", "assistant"]:
-                    chat_messages.append(format_message(message.role, message.content))
+                    chat_messages.append({"role": message.role, "content": message.content})
                     continue
 
                 # Handle user messages
                 if message.role == "user":
-                    # Simple string content
+                    # Case 1: Simple string content
                     if isinstance(message.content, str):
-                        chat_messages.append(format_message("user", message.content))
+                        chat_messages.append({"role": "user", "content": message.content})
                         continue
                         
-                    # Complex content (text + images)
-                    elif isinstance(message.content, list):
+                    # Case 2: Content is a list of dictionaries or objects
+                    if isinstance(message.content, list):
+                        # Initialize containers for this message
                         texts = []
                         images = []
+                        formatted_content = []
                         
-                        # Process each content item
+                        # Process each content item in the list
                         for item in message.content:
-                            if item.type == "text":
-                                text = item.text.strip() if item.text else ""
-                                if text:
-                                    texts.append(text)
-                            elif item.type == "image_url":
-                                url = item.image_url.url
-                                if not url:
-                                    raise HTTPException(status_code=400, detail="Empty image URL provided")
-                                    
-                                # Validate base64 images
-                                if url.startswith("data:"):
-                                    try:
-                                        header, encoded = url.split(",", 1)
-                                        if not header.startswith("data:image/"):
-                                            raise ValueError("Invalid image format")
-                                        base64.b64decode(encoded)
-                                    except Exception as e:
-                                        raise HTTPException(status_code=400, detail=f"Invalid base64 image: {str(e)}")
+                            # Case 2.1: Item is a dictionary (already formatted)
+                            if isinstance(item, dict):
+                                item_type = item.get("type")
                                 
-                                images.append(url)
-                            else:
-                                raise HTTPException(status_code=400, detail=f"Unsupported content type: {item.type}")
-                        
-                        # Validate constraints
-                        if len(images) > 4:
-                            raise HTTPException(status_code=400, detail="Too many images in a single message (max: 4)")
-                            
-                        if not texts:
-                            raise HTTPException(status_code=400, detail="No text content provided")
+                                if item_type == "text":
+                                    text = item.get("text", "").strip()
+                                    if text:
+                                        texts.append(text)
+                                        formatted_content.append({"type": "text", "text": text})
+                                        
+                                elif item_type == "image_url":
+                                    url = item.get("image_url", {}).get("url", "")
+                                    if url:
+                                        # Validate URL
+                                        self._validate_image_url(url)
+                                        images.append(url)
+                                        formatted_content.append({"type": "image_url", "image_url": {"url": url}})
+                                        
+                            # Case 2.2: Item is an object with attributes
+                            elif hasattr(item, "type"):
+                                if item.type == "text":
+                                    text = getattr(item, "text", "").strip()
+                                    if text:
+                                        texts.append(text)
+                                        
+                                elif item.type == "image_url":
+                                    url = getattr(item, "image_url", None)
+                                    if url and hasattr(url, "url"):
+                                        url = url.url
+                                        # Validate URL
+                                        self._validate_image_url(url)
+                                        images.append(url)
+                                            
+                                else:
+                                    raise HTTPException(status_code=400, detail=f"Unsupported content type: {item.type}")
                         
                         # Add collected images to global list
                         if images:
                             image_urls.extend(images)
+                            
+                            # Validate constraints
+                            if len(images) > 4:
+                                raise HTTPException(status_code=400, detail="Too many images in a single message (max: 4)")
                         
-                        # Join text segments
-                        prompt = " ".join(texts)
-                        
-                        # Format appropriately based on position in message sequence
-                        skip_image_token = is_last_message
-                        formatted_message = handle_list_with_image(
-                            prompt=prompt,
-                            role="user",
-                            num_images=len(images),
-                            skip_image_token=skip_image_token
-                        )
-                        chat_messages.append(formatted_message)
+                        # Determine how to format the final message
+                        if formatted_content:
+                            # Already properly formatted content
+                            chat_messages.append({"role": "user", "content": formatted_content})
+                        elif texts and images:
+                            # Need to format text + images manually
+                            prompt = " ".join(texts)
+                            if not prompt:
+                                raise HTTPException(status_code=400, detail="No text content provided")
+                                
+                            # Add text content
+                            content = [{"type": "text", "text": prompt}]
+                            
+                            # Only add image tokens for non-final messages
+                            if not is_last_message:
+                                content.extend([{"type": "image"}] * len(images))
+                                
+                            chat_messages.append({"role": "user", "content": content})
+                        elif texts:
+                            # Text-only message
+                            chat_messages.append({"role": "user", "content": " ".join(texts)})
+                        else:
+                            raise HTTPException(status_code=400, detail="Message contains no valid content")
                     else:
                         raise HTTPException(status_code=400, detail="Invalid message content format")
 
             # Process images and prepare model parameters
             image_paths = await self.image_processor.process_image_urls(image_urls)
+            
             # Extract model parameters, filtering out None values
             model_params = {
                 k: v for k, v in {
@@ -644,3 +658,26 @@ class MLXVLMHandler:
         except Exception as e:
             logger.error(f"Failed to prepare vision request: {str(e)}")
             raise HTTPException(status_code=400, detail=f"Failed to process request: {str(e)}")
+            
+    def _validate_image_url(self, url: str) -> None:
+        """
+        Validate image URL format.
+        
+        Args:
+            url: The image URL to validate
+            
+        Raises:
+            HTTPException: If URL is invalid
+        """
+        if not url:
+            raise HTTPException(status_code=400, detail="Empty image URL provided")
+            
+        # Validate base64 images
+        if url.startswith("data:"):
+            try:
+                header, encoded = url.split(",", 1)
+                if not header.startswith("data:image/"):
+                    raise ValueError("Invalid image format")
+                base64.b64decode(encoded)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid base64 image: {str(e)}")
