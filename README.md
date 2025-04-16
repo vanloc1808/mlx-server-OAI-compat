@@ -506,24 +506,6 @@ The API supports multi-turn conversations for both text-only and vision models:
 }
 ```
 
-### Image Token Handling
-
-For multimodal models that require specific image token formatting, the server handles this automatically. The implementation uses the following approach:
-
-```python
-def handle_list_with_image(prompt, role, num_images, skip_image_token=False):
-    """Format message with proper image token handling"""
-    content = [{"type": "text", "text": prompt}]
-    if role == "user" and not skip_image_token:
-        content.extend([{"type": "image"}] * num_images)
-    return {"role": role, "content": content}
-```
-
-This ensures that:
-- Image tokens are automatically added to user messages
-- You can control whether image tokens appear before or after the text
-- The server handles both single-turn and multi-turn conversations with images
-
 ## Contributing
 We welcome contributions to improve this project! Here's how you can contribute:
 1. Fork the repository to your GitHub account.
