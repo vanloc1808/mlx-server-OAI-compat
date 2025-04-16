@@ -9,8 +9,8 @@ setup(
     author="Huy Vuong",
     packages=find_packages(),
     install_requires=[
-        "mlx-lm",
-        "mlx-vlm",
+        "mlx-vlm==0.1.21",
+        "mlx-lm==0.22.5",
         "fastapi",
         "uvicorn",
         "Pillow",

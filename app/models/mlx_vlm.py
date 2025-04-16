@@ -1,11 +1,12 @@
 from typing import List, Dict, Union, Generator
 from mlx_vlm import load
 from mlx_vlm.prompt_utils import apply_chat_template
-from mlx_vlm.utils import load_config, generate, stream_generate
+from mlx_vlm.utils import load_config, generate, stream_generate, load_image_processor
+
 
 # Default model parameters
 DEFAULT_MAX_TOKENS = 256
-DEFAULT_TEMPERATURE = 0.5
+DEFAULT_TEMPERATURE = 0.0
 DEFAULT_TOP_P = 1.0
 DEFAULT_SEED = 0
 
@@ -29,7 +30,7 @@ class MLX_VLM:
         """
         try:
             self.model, self.processor = load(model_path, lazy=False, trust_remote_code=True)
-            self.config = load_config(model_path)
+            self.config = load_config(model_path, trust_remote_code=True)
         except Exception as e:
             raise ValueError(f"Error loading model: {str(e)}")
         
@@ -59,9 +60,10 @@ class MLX_VLM:
             self.processor, 
             self.config, 
             messages, 
+            add_generation_prompt=True,
             num_images=len(images) if images else 0
-        )
-        
+        )       
+        print("PROMPT", prompt)
         # Set default parameters if not provided
         model_params = {
             "temperature": kwargs.get("temperature", DEFAULT_TEMPERATURE),
