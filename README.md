@@ -506,6 +506,59 @@ The API supports multi-turn conversations for both text-only and vision models:
 }
 ```
 
+## API Response Schemas
+
+The server implements comprehensive Pydantic schemas for request and response handling, ensuring type safety and validation:
+
+### Request Schemas
+- `ChatCompletionRequest`: Handles chat completion requests with support for:
+  - Text and vision messages
+  - Streaming options
+  - Model parameters (temperature, top_p, etc.)
+  - Tool calls and function calling
+- `EmbeddingRequest`: Manages embedding generation requests
+
+### Response Schemas
+- `ChatCompletionResponse`: Standard chat completion responses
+- `ChatCompletionChunk`: Streaming response chunks
+- `EmbeddingResponse`: Embedding generation responses
+- `ErrorResponse`: Standardized error responses
+
+Example response structure:
+```python
+{
+    "id": "chatcmpl-1234567890",
+    "object": "chat.completion",
+    "created": 1234567890,
+    "model": "local-model",
+    "choices": [{
+        "index": 0,
+        "message": {
+            "role": "assistant",
+            "content": "The response content"
+        },
+        "finish_reason": "stop"
+    }]
+}
+```
+
+### Streaming Responses
+
+The server supports streaming responses with proper chunk formatting:
+```python
+{
+    "id": "chatcmpl-1234567890",
+    "object": "chat.completion.chunk",
+    "created": 1234567890,
+    "model": "local-model",
+    "choices": [{
+        "index": 0,
+        "delta": {"content": "chunk of text"},
+        "finish_reason": null
+    }]
+}
+```
+
 ## Contributing
 We welcome contributions to improve this project! Here's how you can contribute:
 1. Fork the repository to your GitHub account.
