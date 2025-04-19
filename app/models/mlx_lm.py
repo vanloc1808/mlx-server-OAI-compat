@@ -26,6 +26,25 @@ class MLX_LM:
         except Exception as e:
             raise ValueError(f"Error loading model: {str(e)}")
         
+    def _apply_pooling_strategy(self, embeddings: mx.array, pooling_strategy: str = "cls") -> mx.array:
+        if pooling_strategy == "cls":
+            embeddings = embeddings[:, 0, :]
+        elif pooling_strategy == "mean":
+            embeddings = embeddings.mean(axis=1)
+        elif pooling_strategy == "max":
+            embeddings = embeddings.max(axis=1)
+        return embeddings
+    
+    def get_embeddings(self, prompt: str, pooling_strategy: str = "cls") -> List[float]:
+        add_special_tokens = self.tokenizer.bos_token is None or not prompt.startswith(
+            self.tokenizer.bos_token
+        )
+        prompt = self.tokenizer.encode(prompt, add_special_tokens=add_special_tokens)
+        prompt = mx.array(prompt)
+        embeddings = self.model.model(prompt[None, :])
+        embeddings = self._apply_pooling_strategy(embeddings, pooling_strategy)
+        return embeddings.tolist()
+        
     def __call__(
         self, 
         messages: List[Dict[str, str]], 
@@ -69,3 +88,6 @@ class MLX_LM:
             )
        
 
+if __name__ == "__main__":
+    model = MLX_LM("mlx-community/Phi-3-mini-4k-instruct-4bit")
+    print(model.get_embeddings("Hello, world!"))
