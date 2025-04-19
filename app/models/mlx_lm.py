@@ -35,13 +35,16 @@ class MLX_LM:
             embeddings = embeddings.max(axis=1)
         return embeddings
     
-    def get_embeddings(self, prompt: str, pooling_strategy: str = "cls") -> List[float]:
-        add_special_tokens = self.tokenizer.bos_token is None or not prompt.startswith(
-            self.tokenizer.bos_token
-        )
-        prompt = self.tokenizer.encode(prompt, add_special_tokens=add_special_tokens)
-        prompt = mx.array(prompt)
-        embeddings = self.model.model(prompt[None, :])
+    def get_embeddings(self, prompt: List[str], pooling_strategy: str = "cls") -> List[float]:
+        batch_prompt = []
+        for p in prompt:
+            add_special_tokens = self.tokenizer.bos_token is None or not p.startswith(
+                self.tokenizer.bos_token
+            )
+            p = self.tokenizer.encode(p, add_special_tokens=add_special_tokens)
+            batch_prompt.append(p)
+        batch_prompt = mx.array(batch_prompt)
+        embeddings = self.model.model(batch_prompt)
         embeddings = self._apply_pooling_strategy(embeddings, pooling_strategy)
         return embeddings.tolist()
         
@@ -86,8 +89,3 @@ class MLX_LM:
                 prompt,
                 sampler = make_sampler(temperature, top_p)
             )
-       
-
-if __name__ == "__main__":
-    model = MLX_LM("mlx-community/Phi-3-mini-4k-instruct-4bit")
-    print(model.get_embeddings("Hello, world!"))

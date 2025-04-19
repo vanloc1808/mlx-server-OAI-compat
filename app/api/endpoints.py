@@ -7,9 +7,14 @@ from http import HTTPStatus
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from app.schemas.openai import ChatCompletionRequest
+from app.schemas.openai import (
+    ChatCompletionRequest, EmbeddingRequest, Embedding,
+    ChatCompletionResponse, ChatCompletionChunk, EmbeddingResponse,
+    ChatCompletionChoice, Message
+)
 from app.utils.errors import create_error_response
 from app.handler.mlx_lm import MLXLMHandler
+from typing import List, Dict, Any, Optional
 
 router = APIRouter()
 
@@ -47,6 +52,7 @@ async def queue_stats(raw_request: Request):
     except Exception as e:
         logger.error(f"Failed to get queue stats: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to get queue stats")
+        
 
 @router.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest, raw_request: Request):
@@ -77,33 +83,54 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
     except Exception as e:
         logger.error(f"Error processing chat completion request: {str(e)}", exc_info=True)
         return JSONResponse(content=create_error_response(str(e)), status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
+    
+@router.post("/v1/embeddings")
+async def embeddings(request: EmbeddingRequest, raw_request: Request):
+    """Handle embedding requests."""
+    handler = raw_request.app.state.handler
+    if handler is None:
+        return JSONResponse(content=create_error_response("Model handler not initialized", "service_unavailable", 503), status_code=503)
+    
+    try:
+        embeddings = await handler.generate_embeddings_response(request)
+        return create_response_embeddings(embeddings, request.model)
+    except Exception as e:
+        logger.error(f"Error processing embedding request: {str(e)}", exc_info=True)
+        return JSONResponse(content=create_error_response(str(e)), status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
+    
+def create_response_embeddings(embeddings: List[float], model: str) -> EmbeddingResponse:
+    embeddings_response = []
+    for index, embedding in enumerate(embeddings):
+        embeddings_response.append(Embedding(embedding=embedding, index=index))
+    return EmbeddingResponse(data=embeddings_response, model=model)
 
-def create_response_chunk(content: str, model: str, is_final: bool = False):
+def create_response_chunk(content: str, model: str, is_final: bool = False) -> ChatCompletionChunk:
     """Create a formatted response chunk for streaming."""
-    return {
-        "id": get_id(),
-        "object": "chat.completion.chunk",
-        "created": int(time.time()),
-        "model": model,
-        "choices": [{
-            "index": 0,
-            "delta": {} if is_final else {"content": content},
-            "finish_reason": "stop" if is_final else None
-        }]
-    }
+    return ChatCompletionChunk(
+        id=get_id(),
+        created=int(time.time()),
+        model=model,
+        choices=[ChatCompletionChoice(
+            index=0,
+            delta={} if is_final else {"content": content},
+            finish_reason="stop" if is_final else None
+        )]
+    )
 
 
 async def handle_stream_response(generator, model: str):
     """Handle streaming response generation."""
     try:
         async for chunk in generator:
-            yield f"data: {json.dumps(create_response_chunk(chunk, model))}\n\n"
+            response_chunk = create_response_chunk(chunk, model)
+            yield f"data: {json.dumps(response_chunk.model_dump())}\n\n"
     except Exception as e:
         logger.error(f"Error in stream wrapper: {str(e)}")
         error_response = {"error": {"message": str(e), "type": "server_error", "code": 500}}
         yield f"data: {json.dumps(error_response)}\n\n"
     finally:
-        yield f"data: {json.dumps(create_response_chunk('', model, is_final=True))}\n\n"
+        final_chunk = create_response_chunk('', model, is_final=True)
+        yield f"data: {json.dumps(final_chunk.model_dump())}\n\n"
         yield "data: [DONE]\n\n"
 
 async def process_vision_request(handler, request: ChatCompletionRequest):
@@ -126,25 +153,18 @@ async def process_text_request(handler, request: ChatCompletionRequest):
         )
     return format_final_response(await handler.generate_text_response(request), request.model)
 
-
-
-
-def format_final_response(content: str, model: str):
+def format_final_response(content: str, model: str) -> ChatCompletionResponse:
     """Format the final non-streaming response."""
-    return {
-        "id": get_id(),
-        "object": "chat.completion",
-        "created": int(time.time()),
-        "model": model,
-        "choices": [{
-            "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": content
-            },
-            "finish_reason": "stop"
-        }]
-    }
+    return ChatCompletionResponse(
+        id=get_id(),
+        created=int(time.time()),
+        model=model,
+        choices=[ChatCompletionChoice(
+            index=0,
+            message=Message(role="assistant", content=content),
+            finish_reason="stop"
+        )]
+    )
 
 def get_id():
     """

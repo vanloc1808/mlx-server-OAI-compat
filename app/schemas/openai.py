@@ -134,3 +134,48 @@ class ChatCompletionRequest(BaseModel):
         
         logger.debug(f"No images detected, treating as text-only request")
         return False
+    
+class Embedding(BaseModel):
+    """
+    Represents an embedding object in a chat completion request.
+    """
+    embedding: List[float] = Field(..., description="The embedding vector")
+    index: int = Field(..., description="The index of the embedding in the list")
+    object: str = Field(default="embedding", description="The object type")
+
+class ChatCompletionChoice(BaseModel):
+    """
+    Represents a choice in a chat completion response.
+    """
+    index: int
+    message: Optional[Message] = None
+    delta: Optional[Dict[str, Any]] = None
+    finish_reason: Optional[str] = None
+
+class ChatCompletionResponse(BaseModel):
+    """
+    Represents a complete chat completion response.
+    """
+    id: str
+    object: str = "chat.completion"
+    created: int
+    model: str
+    choices: List[ChatCompletionChoice]
+
+class ChatCompletionChunk(BaseModel):
+    """
+    Represents a streaming chunk in a chat completion response.
+    """
+    id: str
+    object: str = "chat.completion.chunk"
+    created: int
+    model: str
+    choices: List[ChatCompletionChoice]
+
+class EmbeddingResponse(BaseModel):
+    """
+    Represents an embedding response.
+    """
+    object: str = "list"
+    data: List[Embedding]
+    model: str
