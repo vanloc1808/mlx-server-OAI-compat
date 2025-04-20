@@ -10,6 +10,7 @@ This repository hosts a high-performance API server that provides OpenAI-compati
 This server implements the OpenAI API interface, allowing you to use it as a drop-in replacement for OpenAI's services in your applications. It supports:
 - Chat completions (both streaming and non-streaming)
 - Vision-language model interactions
+- Text embeddings generation (with text-only models)
 - Standard OpenAI request/response formats
 - Common OpenAI parameters (temperature, top_p, etc.)
 
@@ -96,6 +97,8 @@ python -m app.main \
   --queue-size 100
 ```
 
+> **Note:** Text embeddings via the `/v1/embeddings` endpoint are only available with text-only models (`--model-type lm`).
+
 Vision-language model:
 ```bash
 python -m app.main \
@@ -163,6 +166,34 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)
 ```
 
+#### Embeddings
+```python
+import openai
+
+client = openai.OpenAI(
+    base_url="http://localhost:8000/v1",
+    api_key="not-needed"
+)
+
+# Generate embeddings for a single text
+embedding_response = client.embeddings.create(
+    model="local-model",  # Model name doesn't matter for local server
+    input=["The quick brown fox jumps over the lazy dog"]
+)
+print(f"Embedding dimension: {len(embedding_response.data[0].embedding)}")
+
+# Generate embeddings for multiple texts
+batch_response = client.embeddings.create(
+    model="local-model",
+    input=[
+        "Machine learning algorithms improve with more data",
+        "Natural language processing helps computers understand human language",
+        "Computer vision allows machines to interpret visual information"
+    ]
+)
+print(f"Number of embeddings: {len(batch_response.data)}")
+```
+
 ### CLI Usage
 
 You can also use the provided CLI command to launch the server:
@@ -175,7 +206,7 @@ All parameters available in the Python version are also available in the CLI:
 ```bash
 mlx-server launch \
   --model-path mlx-community/gemma-3-4b-it-4bit \
-  --model-type lm \
+  --model-type vlm \
   --port 8000 \
   --max-concurrency 1 \
   --queue-timeout 300 \
@@ -391,6 +422,48 @@ curl localhost:8000/v1/chat/completions \
   }'
 ```
 
+### Embeddings Example
+```bash
+curl localhost:8000/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-MLX-Q8",
+    "input": ["The quick brown fox jumps over the lazy dog"]
+  }'
+```
+
+Response format:
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "embedding",
+      "embedding": [0.0123, ..., 0.9876],
+      "index": 0
+    }
+  ],
+  "model": "mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-MLX-Q8"
+}
+```
+
+You can also generate embeddings for multiple texts in a single request:
+
+```bash
+curl localhost:8000/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-MLX-Q8",
+    "input": [
+      "The quick brown fox jumps over the lazy dog", 
+      "Machine learning models require training data", 
+      "Neural networks are inspired by biological neurons"
+    ]
+  }'
+```
+
+> **Note:** The server currently supports text embeddings only with `--model-type lm` (text-only models). Embeddings are not yet supported with vision-language models. See the included `examples/embeddings_examples.ipynb` notebook for detailed examples of using embeddings for semantic search, similarity comparison, and other applications.
+
 > **Warning:** Make sure you're running the server with `--model-type vlm` when making vision requests. If you send a vision request to a server running with `--model-type lm` (text-only model), you'll receive a 400 error with a message that vision requests are not supported with text-only models.
 
 ### Request Format
@@ -405,6 +478,10 @@ curl localhost:8000/v1/chat/completions \
       - `image_url`: Object containing the image URL (for type "image_url")
 - `stream`: Optional boolean to enable streaming responses
 - Additional parameters: `temperature`, `max_tokens`, `top_p`, etc.
+
+For embeddings:
+- `model`: Optional model identifier
+- `input`: String or array of strings to generate embeddings for
 
 ### Response Format
 The server will return responses in OpenAI-compatible format:
@@ -505,6 +582,75 @@ The API supports multi-turn conversations for both text-only and vision models:
   ]
 }
 ```
+
+## API Response Schemas
+
+The server implements comprehensive Pydantic schemas for request and response handling, ensuring type safety and validation:
+
+### Request Schemas
+- `ChatCompletionRequest`: Handles chat completion requests with support for:
+  - Text and vision messages
+  - Streaming options
+  - Model parameters (temperature, top_p, etc.)
+  - Tool calls and function calling
+- `EmbeddingRequest`: Manages embedding generation requests
+
+### Response Schemas
+- `ChatCompletionResponse`: Standard chat completion responses
+- `ChatCompletionChunk`: Streaming response chunks
+- `EmbeddingResponse`: Embedding generation responses
+- `ErrorResponse`: Standardized error responses
+
+Example response structure:
+```python
+{
+    "id": "chatcmpl-1234567890",
+    "object": "chat.completion",
+    "created": 1234567890,
+    "model": "local-model",
+    "choices": [{
+        "index": 0,
+        "message": {
+            "role": "assistant",
+            "content": "The response content"
+        },
+        "finish_reason": "stop"
+    }]
+}
+```
+
+### Streaming Responses
+
+The server supports streaming responses with proper chunk formatting:
+```python
+{
+    "id": "chatcmpl-1234567890",
+    "object": "chat.completion.chunk",
+    "created": 1234567890,
+    "model": "local-model",
+    "choices": [{
+        "index": 0,
+        "delta": {"content": "chunk of text"},
+        "finish_reason": null
+    }]
+}
+```
+
+## Example Notebooks
+
+The repository includes example notebooks to help you get started with different aspects of the API:
+
+- **vision_examples.ipynb**: A comprehensive guide to using the vision capabilities of the API, including:
+  - Processing image inputs in various formats
+  - Vision analysis and object detection
+  - Multi-turn conversations with images
+  - Using vision models for detailed image description and analysis
+
+- **embeddings_examples.ipynb**: A comprehensive guide to using the embeddings API, including:
+  - Generating embeddings for single and batch inputs
+  - Computing semantic similarity between texts
+  - Building a simple vector-based search system
+  - Comparing semantic relationships between concepts
 
 ## Contributing
 We welcome contributions to improve this project! Here's how you can contribute:

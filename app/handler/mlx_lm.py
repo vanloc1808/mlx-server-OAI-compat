@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from app.core.metrics import RequestMetrics
 from app.core.queue import RequestQueue
 from app.models.mlx_lm import MLX_LM
-from app.schemas.openai import ChatCompletionRequest
+from app.schemas.openai import ChatCompletionRequest, EmbeddingRequest
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -196,6 +196,37 @@ class MLXLMHandler:
                 status_code=500,
                 detail=f"Failed to generate text response: {str(e)}"
             )
+        
+    async def generate_embeddings_response(self, request: EmbeddingRequest):
+        """
+        Generate embeddings for a given text input.
+        
+        Args:
+            request: EmbeddingRequest object containing the text input.
+        
+        Returns:
+            List[float]: Embeddings for the input text.
+        """
+        try:
+            # Create a unique request ID
+            request_id = f"embeddings-{uuid.uuid4()}"
+            request_data = {
+                "input": request.input,
+                "model": request.model
+            }
+
+            # Submit to the request queue
+            response = await self.request_queue.submit(request_id, request_data)
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Error in embeddings generation: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to generate embeddings: {str(e)}"
+            )
+        
 
     async def _process_request(self, request_data: Dict[str, Any]) -> str:
         """
@@ -208,6 +239,10 @@ class MLXLMHandler:
             str: The model's response.
         """
         try:
+            # Check if the request is for embeddings
+            if request_data.get("input"):
+                return self.model.get_embeddings(request_data["input"])
+
             # Extract request parameters
             messages = request_data.get("messages", [])
             stream = request_data.get("stream", False)
