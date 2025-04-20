@@ -63,7 +63,6 @@ class MLX_VLM:
             add_generation_prompt=True,
             num_images=len(images) if images else 0
         )       
-        print("PROMPT", prompt)
         # Set default parameters if not provided
         model_params = {
             "temperature": kwargs.get("temperature", DEFAULT_TEMPERATURE),
