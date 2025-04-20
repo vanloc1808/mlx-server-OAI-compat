@@ -5,12 +5,14 @@ from mlx_lm.generate import (
     stream_generate,
 )
 from mlx_lm.sample_utils import make_sampler
-from typing import List, Dict, Union, Generator
+from typing import List, Dict, Union, Generator, Optional, Tuple
+import numpy as np
 
 DEFAULT_TEMPERATURE = 0.0
 DEFAULT_TOP_P = 1.0
 DEFAULT_SEED = 0
 DEFAULT_MAX_TOKENS = 256
+DEFAULT_BATCH_SIZE = 32
 
 class MLX_LM:
     """
@@ -23,30 +25,77 @@ class MLX_LM:
     def __init__(self, model_path: str):
         try:
             self.model, self.tokenizer = load(model_path)
+            # Pre-compute tokenizer properties
+            self.pad_token_id = self.tokenizer.pad_token_id
+            self.bos_token = self.tokenizer.bos_token
         except Exception as e:
             raise ValueError(f"Error loading model: {str(e)}")
         
-    def _apply_pooling_strategy(self, embeddings: mx.array, pooling_strategy: str = "cls") -> mx.array:
-        if pooling_strategy == "cls":
-            embeddings = embeddings[:, 0, :]
-        elif pooling_strategy == "mean":
-            embeddings = embeddings.mean(axis=1)
-        elif pooling_strategy == "max":
-            embeddings = embeddings.max(axis=1)
-        return embeddings
+    def _apply_pooling_strategy(self, embeddings: mx.array) -> mx.array:
+        # Pooling strategy: mean with optimized computation
+        return mx.mean(embeddings, axis=1)
+
+    def _batch_process(self, prompts: List[str], batch_size: int = DEFAULT_BATCH_SIZE) -> List[List[int]]:
+        """Process prompts in batches with optimized tokenization."""
+        all_tokenized = []
+        
+        # Process prompts in batches
+        for i in range(0, len(prompts), batch_size):
+            batch = prompts[i:i + batch_size]
+            tokenized_batch = []
+            
+            # Tokenize all prompts in batch
+            for p in batch:
+                add_special_tokens = self.bos_token is None or not p.startswith(self.bos_token)
+                tokens = self.tokenizer.encode(p, add_special_tokens=add_special_tokens)
+                tokenized_batch.append(tokens)
+            
+            # Find max length in batch
+            max_length = max(len(tokens) for tokens in tokenized_batch)
+            
+            # Pad tokens in a vectorized way
+            for tokens in tokenized_batch:
+                padding = [self.pad_token_id] * (max_length - len(tokens))
+                all_tokenized.append(tokens + padding)
+        
+        return all_tokenized
+
+    def _preprocess_prompt(self, prompt: str) -> List[int]:
+        """Tokenize a single prompt efficiently."""
+        add_special_tokens = self.bos_token is None or not prompt.startswith(self.bos_token)
+        tokens = self.tokenizer.encode(prompt, add_special_tokens=add_special_tokens)
+        return mx.array(tokens)
     
-    def get_embeddings(self, prompt: List[str], pooling_strategy: str = "cls") -> List[float]:
-        batch_prompt = []
-        for p in prompt:
-            add_special_tokens = self.tokenizer.bos_token is None or not p.startswith(
-                self.tokenizer.bos_token
-            )
-            p = self.tokenizer.encode(p, add_special_tokens=add_special_tokens)
-            batch_prompt.append(p)
-        batch_prompt = mx.array(batch_prompt)
-        embeddings = self.model.model(batch_prompt)
-        embeddings = self._apply_pooling_strategy(embeddings, pooling_strategy)
-        return embeddings.tolist()
+    def get_embeddings(
+        self, 
+        prompts: List[str], 
+        batch_size: int = DEFAULT_BATCH_SIZE
+    ) -> List[float]:
+        """
+        Get embeddings for a list of prompts efficiently.
+        
+        Args:
+            prompts: List of text prompts
+            batch_size: Size of batches for processing
+            
+        Returns:
+            List of embeddings as float arrays
+        """
+        # Process in batches to optimize memory usage
+        all_embeddings = []
+        for i in range(0, len(prompts), batch_size):
+            batch_prompts = prompts[i:i + batch_size]
+            tokenized_batch = self._batch_process(batch_prompts, batch_size)
+            
+            # Convert to MLX array for efficient computation
+            tokenized_batch = mx.array(tokenized_batch)
+            
+            # Compute embeddings for batch
+            batch_embeddings = self.model.model(tokenized_batch)
+            pooled_embedding = self._apply_pooling_strategy(batch_embeddings)
+            all_embeddings.extend(pooled_embedding.tolist())
+
+        return all_embeddings
         
     def __call__(
         self, 
@@ -60,11 +109,17 @@ class MLX_LM:
         Args:
             messages (List[Dict[str, str]]): List of messages in the conversation.
             stream (bool): Whether to stream the response.
+            **kwargs: Additional parameters for generation
+                - temperature: Sampling temperature (default: 0.0)
+                - top_p: Top-p sampling parameter (default: 1.0)
+                - seed: Random seed (default: 0)
+                - max_tokens: Maximum number of tokens to generate (default: 256)
         """
         # Set default parameters if not provided
         temperature = kwargs.get("temperature", DEFAULT_TEMPERATURE)
         top_p = kwargs.get("top_p", DEFAULT_TOP_P)
         seed = kwargs.get("seed", DEFAULT_SEED)
+        max_tokens = kwargs.get("max_tokens", DEFAULT_MAX_TOKENS)
 
         mx.random.seed(seed)
 
@@ -73,13 +128,17 @@ class MLX_LM:
             messages,
             add_generation_prompt=True,                
         )
+        
+        sampler = make_sampler(temperature, top_p)
+        
         if not stream:
             # Non-streaming mode: return complete response
             return generate(
                 self.model,
                 self.tokenizer,
                 prompt,
-                sampler = make_sampler(temperature, top_p)
+                sampler=sampler,
+                max_tokens=max_tokens
             )
         else:
             # Streaming mode: return generator of chunks
@@ -87,5 +146,6 @@ class MLX_LM:
                 self.model,
                 self.tokenizer,
                 prompt,
-                sampler = make_sampler(temperature, top_p)
+                sampler=sampler,
+                max_tokens=max_tokens
             )
