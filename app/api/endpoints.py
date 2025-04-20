@@ -4,7 +4,7 @@ import random
 import time
 from http import HTTPStatus
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.schemas.openai import (
@@ -32,7 +32,7 @@ async def health(raw_request: Request):
         return {"status": "ok", "handler_initialized": handler is not None}
     except Exception as e:
         logger.error(f"Health check failed: {str(e)}")
-        raise HTTPException(status_code=500, detail="Health check failed")
+        return JSONResponse(content= create_error_response("Health check failed", "server_error", 500), status_code=500)
 
 @router.get("/v1/queue/stats")
 async def queue_stats(raw_request: Request):
@@ -41,7 +41,7 @@ async def queue_stats(raw_request: Request):
     """
     handler = raw_request.app.state.handler
     if handler is None:
-        raise HTTPException(status_code=503, detail="Model handler not initialized")
+        return JSONResponse(content= create_error_response("Model handler not initialized", "service_unavailable", 503), status_code=503)
     
     try:
         stats = await handler.get_queue_stats()
@@ -51,7 +51,7 @@ async def queue_stats(raw_request: Request):
         }
     except Exception as e:
         logger.error(f"Failed to get queue stats: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to get queue stats")
+        return JSONResponse(content= create_error_response("Failed to get queue stats", "server_error", 500), status_code=500)
         
 
 @router.post("/v1/chat/completions")
@@ -90,13 +90,16 @@ async def embeddings(request: EmbeddingRequest, raw_request: Request):
     handler = raw_request.app.state.handler
     if handler is None:
         return JSONResponse(content=create_error_response("Model handler not initialized", "service_unavailable", 503), status_code=503)
-    
-    try:
-        embeddings = await handler.generate_embeddings_response(request)
-        return create_response_embeddings(embeddings, request.model)
-    except Exception as e:
-        logger.error(f"Error processing embedding request: {str(e)}", exc_info=True)
-        return JSONResponse(content=create_error_response(str(e)), status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    if isinstance(handler, MLXLMHandler):
+        try:
+            embeddings = await handler.generate_embeddings_response(request)
+            return create_response_embeddings(embeddings, request.model)
+        except Exception as e:
+            logger.error(f"Error processing embedding request: {str(e)}", exc_info=True)
+            return JSONResponse(content=create_error_response(str(e)), status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
+    else:
+        return JSONResponse(content= create_error_response("VLM has not supported embeddings yet", "unsupported_request", 400), status_code=400)
     
 def create_response_embeddings(embeddings: List[float], model: str) -> EmbeddingResponse:
     embeddings_response = []
