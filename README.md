@@ -5,6 +5,21 @@ This repository hosts a high-performance API server that provides OpenAI-compati
 
 > **Note:** This project currently supports **MacOS with M-series chips** only as it specifically leverages MLX, Apple's framework optimized for Apple Silicon.
 
+## Demo
+
+### 🚀 See It In Action
+
+Check out our [video demonstration](https://youtu.be/BN8gYBGID1E) to see the server in action! The demo showcases:
+
+- Setting up and launching the server
+- Using the OpenAI Python SDK for seamless integration
+
+<p align="center">
+  <a href="https://youtu.be/BN8gYBGID1E">
+    <img src="https://img.youtube.com/vi/BN8gYBGID1E/0.jpg" alt="MLX Server OAI-Compatible Demo" width="600">
+  </a>
+</p>
+
 ## OpenAI Compatibility
 
 This server implements the OpenAI API interface, allowing you to use it as a drop-in replacement for OpenAI's services in your applications. It supports:
