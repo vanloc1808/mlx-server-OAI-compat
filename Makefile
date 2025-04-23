@@ -1,6 +1,6 @@
 run:
 	mlx-server launch \
-	--model-path mlx-community/gemma-3-4b-it-qat-4bit \
+	--model-path mlx-community/Qwen2.5-VL-3B-Instruct-4bit \
 	--model-type vlm \
 	--max-concurrency 1 \
 	--queue-timeout 300 \

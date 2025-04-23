@@ -9,14 +9,14 @@ This repository hosts a high-performance API server that provides OpenAI-compati
 
 ### 🚀 See It In Action
 
-Check out our [video demonstration](https://youtu.be/BN8gYBGID1E) to see the server in action! The demo showcases:
+Check out our [video demonstration](https://youtu.be/BMXOWK1Okk4) to see the server in action! The demo showcases:
 
 - Setting up and launching the server
 - Using the OpenAI Python SDK for seamless integration
 
 <p align="center">
-  <a href="https://youtu.be/BN8gYBGID1E">
-    <img src="https://img.youtube.com/vi/BN8gYBGID1E/0.jpg" alt="MLX Server OAI-Compatible Demo" width="600">
+  <a href="https://youtu.be/BMXOWK1Okk4">
+    <img src="https://img.youtube.com/vi/BMXOWK1Okk4/0.jpg" alt="MLX Server OAI-Compatible Demo" width="600">
   </a>
 </p>
 
@@ -314,19 +314,22 @@ The queue system handles various error conditions:
 
 The server includes comprehensive performance monitoring to help track and optimize model performance.
 
-### Key Features
+### Key Metrics
 
-- **Token Generation Speed**: Real-time tracking of tokens per second (TPS)
-- **Request Metrics**: Detailed statistics for each request:
-  - Token counts
-  - Word counts
-  - Processing time
-  - Success/failure rates
-- **Performance History**: Maintains historical data for trend analysis
-- **Request Type Analysis**: Separate metrics for different request types:
-  - Vision vs. text requests
-  - Streaming vs. non-streaming requests
-- **Error Tracking**: Monitors and categorizes different types of errors
+- **Tokens Per Second (TPS)**: Real-time tracking of token generation speed
+- **Time To First Token (TTFT)**: Measures latency from request to first token generation
+- **Throughput**: Tracks overall request processing capacity (requests per second)
+- **Total Requests**: Cumulative count of all processed requests
+- **Error Count**: Tracks the number of failed requests
+
+### Metrics System Architecture
+
+The performance metrics system uses a `RequestMetrics` class that:
+
+1. **Rolling Averages**: Maintains running averages for key performance indicators
+2. **Request-type Tracking**: Logs metrics by request type (chat completions, embeddings, etc.)
+3. **Automatic Logging**: Records key metrics for each request completion
+4. **Token Estimation**: Provides approximate token count estimation for text inputs
 
 ### Performance Metrics
 
@@ -349,38 +352,24 @@ Example response with performance data:
   },
   "metrics": {
     "total_requests": 100,
-    "total_tokens": 5000,
-    "total_time": 50.5,
-    "request_types": {
-      "vision": 40,
-      "vision_stream": 20,
-      "text": 30,
-      "text_stream": 10
-    },
-    "error_count": 2,
     "performance": {
-      "avg_tps": 99.0,
-      "max_tps": 150.0,
-      "min_tps": 50.0,
-      "recent_requests": 100
-    }
+      "tps": 99.0,
+      "ttft": 150.0,
+      "throughput": 2.5
+    },
+    "error_count": 2
   }
 }
 ```
 
-### Metrics System Design
+### Performance Optimization
 
-The performance metrics system is designed for reliability and accuracy:
+Based on metrics collected, you can optimize server performance:
 
-1. **Standardized Metrics**: All request handlers use a consistent metrics format
-2. **Fault Tolerance**: The system includes fallbacks for missing data:
-   ```python
-   # Example of safe metrics access
-   self.metrics["total_tokens"] += metrics.get("token_count", metrics.get("estimated_tokens", 0))
-   ```
-3. **Real-time Updates**: Metrics are updated as requests are processed
-4. **Historical Tracking**: Maintains a history of recent requests for trend analysis
-5. **Error Resilience**: Continues operating even if some metrics fail to collect
+1. **Concurrency Tuning**: Adjust `--max-concurrency` based on throughput metrics
+2. **Queue Size Management**: Configure `--queue-size` to handle expected request volumes
+3. **Model Selection**: Compare TPS across different quantization levels (4-bit vs 8-bit)
+4. **Resource Allocation**: Monitor TTFT to ensure acceptable response latency
 
 ## API Usage
 
