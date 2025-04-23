@@ -72,9 +72,9 @@ class MLXLMHandler:
         try:
             # Start timing
             start_time = time.time()
+            request_start = time.time()
+            first_token_time = None
             total_tokens = 0
-            total_words = 0
-            total_chars = 0
             
             # Prepare the text request
             chat_messages, model_params = await self._prepare_text_request(request)
@@ -90,8 +90,13 @@ class MLXLMHandler:
             response_generator = await self.request_queue.submit(request_id, request_data)
             
             # Process and yield each chunk
+            first_chunk = True
             for chunk in response_generator:
                 if chunk:
+                    if first_chunk:
+                        first_token_time = time.time() - request_start
+                        first_chunk = False
+                    
                     text_chunk = ""
                     if hasattr(chunk, 'text'):
                         text_chunk = chunk.text
@@ -102,24 +107,21 @@ class MLXLMHandler:
                     
                     # Update token count
                     if text_chunk:
-                        chunk_metrics = RequestMetrics.estimate_tokens(text_chunk)
-                        total_tokens += chunk_metrics["estimated_tokens"]
-                        total_words += chunk_metrics["word_count"]
-                        total_chars += chunk_metrics["char_count"]
+                        total_tokens += RequestMetrics.estimate_tokens(text_chunk)["estimated_tokens"]
                     
                     yield text_chunk
             
-            # Calculate and log TPS statistics
+            # Calculate metrics
             elapsed_time = time.time() - start_time
             tps = total_tokens / elapsed_time if elapsed_time > 0 else 0
+            ttft = first_token_time * 1000 if first_token_time else 0  # Convert to ms
+            throughput = 1 / elapsed_time if elapsed_time > 0 else 0  # requests per second
             
             # Update metrics
             metrics = {
-                "token_count": total_tokens,
-                "word_count": total_words,
-                "char_count": total_chars,
-                "elapsed_time": elapsed_time,
-                "tps": tps
+                "tps": tps,
+                "ttft": ttft,
+                "throughput": throughput
             }
             self.metrics.update("text_stream", metrics)
             
@@ -168,17 +170,19 @@ class MLXLMHandler:
             # Submit to the request queue
             response = await self.request_queue.submit(request_id, request_data)
             
-            # Calculate and log TPS statistics
+            # Calculate metrics
             elapsed_time = time.time() - start_time
-            metrics = RequestMetrics.estimate_tokens(response)
-            tps = metrics["estimated_tokens"] / elapsed_time if elapsed_time > 0 else 0
+            estimated_tokens = RequestMetrics.estimate_tokens(response)["estimated_tokens"]
+            tps = estimated_tokens / elapsed_time if elapsed_time > 0 else 0
+            ttft = elapsed_time * 1000  # Convert to ms (for non-streaming, TTFT is full response time)
+            throughput = 1 / elapsed_time if elapsed_time > 0 else 0  # requests per second
             
             # Update metrics
-            metrics.update({
-                "elapsed_time": elapsed_time,
+            metrics = {
                 "tps": tps,
-                "token_count": metrics["estimated_tokens"]
-            })
+                "ttft": ttft,
+                "throughput": throughput
+            }
             self.metrics.update("text", metrics)
             
             return response

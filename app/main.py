@@ -67,10 +67,10 @@ def create_lifespan(config_args):
         logger.info("Shutting down application")
         if hasattr(app.state, "handler") and app.state.handler:
             try:
-                # Ensure queue is stopped
-                logger.info("Stopping request queue")
-                await app.state.handler.request_queue.stop()
-                logger.info("Request queue stopped")
+                # Use the proper cleanup method which handles both request queue and image processor
+                logger.info("Cleaning up resources")
+                await app.state.handler.cleanup()
+                logger.info("Resources cleaned up successfully")
             except Exception as e:
                 logger.error(f"Error during shutdown: {str(e)}")
     

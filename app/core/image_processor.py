@@ -7,29 +7,23 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from io import BytesIO
 from typing import List, Optional
-from urllib3 import PoolManager
-from PIL import Image
+import tempfile
 import aiohttp
 import time
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
 class ImageProcessor:
-    def __init__(self, temp_dir: str, max_workers: int = 4, cache_size: int = 1000):
-        self.temp_dir = temp_dir
-        self._http_pool = PoolManager(maxsize=10, retries=3)
+    def __init__(self, max_workers: int = 4, cache_size: int = 1000):
+        # Use tempfile for macOS-efficient temporary file handling
+        self.temp_dir = tempfile.TemporaryDirectory()
         self._session: Optional[aiohttp.ClientSession] = None
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self._cache_size = cache_size
         self._last_cleanup = time.time()
         self._cleanup_interval = 3600  # 1 hour
-        
-        # Ensure temp directory exists
-        os.makedirs(temp_dir, exist_ok=True)
-        
-        # Configure PIL for better performance
-        Image.MAX_IMAGE_PIXELS = None  # Disable maximum image size check
-        Image.warnings.simplefilter('ignore', Image.DecompressionBombWarning)
+        Image.MAX_IMAGE_PIXELS = 100000000  # Limit to 100 megapixels
 
     @lru_cache(maxsize=1000)
     def _get_image_hash(self, image_url: str) -> str:
@@ -39,24 +33,22 @@ class ImageProcessor:
         else:
             data = image_url.encode('utf-8')
         return hashlib.md5(data).hexdigest()
-    
-    def _resize_image_keep_aspect_ratio(self, image: Image.Image, max_size: int = 768) -> Image.Image:
+
+    def _resize_image_keep_aspect_ratio(self, image: Image.Image, max_size: int = 512) -> Image.Image:
         width, height = image.size
+        if width <= max_size and height <= max_size:
+            return image
         if width > height:
             new_width = max_size
             new_height = int(height * max_size / width)
         else:
             new_height = max_size
             new_width = int(width * max_size / height)
-        
         return image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-    
+
     def _prepare_image_for_saving(self, image: Image.Image) -> Image.Image:
-        """Convert image to RGB mode if necessary before saving as JPEG."""
         if image.mode in ('RGBA', 'LA'):
-            # Create a white background
             background = Image.new('RGB', image.size, (255, 255, 255))
-            # Paste using alpha channel as mask
             if image.mode == 'RGBA':
                 background.paste(image, mask=image.split()[3])
             else:
@@ -70,9 +62,7 @@ class ImageProcessor:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=30),
-                headers={
-                    "User-Agent": "mlx-server-OAI-compat/1.0 (https://github.com/cubist38/mlx-server-OAI-compat; cubist38@gmail.com) Python-Requests"
-                }
+                headers={"User-Agent": "mlx-server-OAI-compat/1.0"}
             )
         return self._session
 
@@ -80,8 +70,8 @@ class ImageProcessor:
         current_time = time.time()
         if current_time - self._last_cleanup > self._cleanup_interval:
             try:
-                for file in os.listdir(self.temp_dir):
-                    file_path = os.path.join(self.temp_dir, file)
+                for file in os.listdir(self.temp_dir.name):
+                    file_path = os.path.join(self.temp_dir.name, file)
                     if os.path.getmtime(file_path) < current_time - self._cleanup_interval:
                         os.remove(file_path)
                 self._last_cleanup = current_time
@@ -91,53 +81,41 @@ class ImageProcessor:
     async def _process_single_image(self, image_url: str) -> str:
         try:
             image_hash = self._get_image_hash(image_url)
-            cached_path = os.path.join(self.temp_dir, f"{image_hash}.jpg")
+            cached_path = os.path.join(self.temp_dir.name, f"{image_hash}.jpg")
 
             if os.path.exists(cached_path):
                 logger.debug(f"Using cached image: {cached_path}")
                 return cached_path
-            
-            # check if image_url is a local file
+
             if os.path.exists(image_url):
-                image = Image.open(image_url)
-                image = self._resize_image_keep_aspect_ratio(image)
-                image = self._prepare_image_for_saving(image)
-                image.save(cached_path, 'JPEG', quality=100, optimize=True)
+                # Read-only image loading for memory efficiency
+                with Image.open(image_url, mode='r') as image:
+                    image = self._resize_image_keep_aspect_ratio(image)
+                    image = self._prepare_image_for_saving(image)
+                    image.save(cached_path, 'JPEG', quality=100, optimize=True)
                 return cached_path
 
             elif image_url.startswith("data:"):
-                try:
-                    header, encoded = image_url.split(",", 1)
-                    data = base64.b64decode(encoded)
-                    
-                    try:
-                        image = Image.open(BytesIO(data))
-                    except Exception as img_error:
-                        logger.error(f"Failed to open image from base64 data: {str(img_error)}")
-                        if "image/jpeg" in header:
-                            from PIL import ImageFile
-                            ImageFile.LOAD_TRUNCATED_IMAGES = True
-                            image = Image.open(BytesIO(data))
-                        elif "image/png" in header:
-                            image = Image.open(BytesIO(data))
-                        else:
-                            raise ValueError(f"Unsupported image format: {header}")
-                except Exception as base64_error:
-                    raise ValueError(f"Invalid base64 image data: {str(base64_error)}")
+                _, encoded = image_url.split(",", 1)
+                estimated_size = len(encoded) * 3 / 4
+                if estimated_size > 100 * 1024 * 1024:
+                    raise ValueError("Base64-encoded image exceeds 100 MB")
+                data = base64.b64decode(encoded)
+                with Image.open(BytesIO(data), mode='r') as image:
+                    image = self._resize_image_keep_aspect_ratio(image)
+                    image = self._prepare_image_for_saving(image)
+                    image.save(cached_path, 'JPEG', quality=100, optimize=True)
             else:
                 session = await self._get_session()
                 async with session.get(image_url) as response:
                     response.raise_for_status()
                     data = await response.read()
-                    image = Image.open(BytesIO(data))
+                    with Image.open(BytesIO(data), mode='r') as image:
+                        image = self._resize_image_keep_aspect_ratio(image)
+                        image = self._prepare_image_for_saving(image)
+                        image.save(cached_path, 'JPEG', quality=100, optimize=True)
 
-            image = self._resize_image_keep_aspect_ratio(image)
-            image = self._prepare_image_for_saving(image)
-            image.save(cached_path, 'JPEG', quality=100, optimize=True)
-            
-            # Cleanup old files periodically
             self._cleanup_old_files()
-            
             return cached_path
 
         except Exception as e:
@@ -152,16 +130,7 @@ class ImageProcessor:
         return await asyncio.gather(*tasks, return_exceptions=True)
 
     async def cleanup(self):
-        """Cleanup resources."""
         if self._session and not self._session.closed:
             await self._session.close()
         self.executor.shutdown(wait=True)
-        self._http_pool.clear()
-        
-        try:
-            # Clean up temp directory
-            for file in os.listdir(self.temp_dir):
-                os.remove(os.path.join(self.temp_dir, file))
-            os.rmdir(self.temp_dir)
-        except Exception as e:
-            logger.warning(f"Failed to clean up temp directory: {str(e)}")
+        self.temp_dir.cleanup()
