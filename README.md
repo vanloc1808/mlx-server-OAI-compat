@@ -1,16 +1,80 @@
 # mlx-server-OAI-compat
 
+[![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/release/python-3110/)
+
 ## Description
 This repository hosts a high-performance API server that provides OpenAI-compatible endpoints for MLX models. Developed using Python and powered by the FastAPI framework, it provides an efficient, scalable, and user-friendly solution for running MLX-based vision and language models locally with an OpenAI-compatible interface.
 
 > **Note:** This project currently supports **MacOS with M-series chips** only as it specifically leverages MLX, Apple's framework optimized for Apple Silicon.
+
+---
+
+## Table of Contents
+- [Key Features](#key-features)
+- [Quickstart](#quickstart)
+- [OpenAI Compatibility](#openai-compatibility)
+- [Supported Model Types](#supported-model-types)x
+- [Installation](#installation)
+- [Usage](#usage)
+  - [Starting the Server](#starting-the-server)
+  - [Using the API](#using-the-api)
+  - [Vision-Language Embeddings Example](#vision-language-embeddings-example)
+  - [CLI Usage](#cli-usage)
+- [Request Queue System](#request-queue-system)
+- [Performance Monitoring](#performance-monitoring)
+- [API Usage](#api-usage)
+- [API Response Schemas](#api-response-schemas)
+- [Example Notebooks](#example-notebooks)
+- [Contributing](#contributing)
+- [License](#license)
+- [Support](#support)
+- [Acknowledgments](#acknowledgments)
+- [FAQ](#faq)
+
+---
+
+## Key Features
+- 🚀 **Fast, local OpenAI-compatible API** for MLX models
+- 🖼️ **Vision-language and text-only model support**
+- 🔌 **Drop-in replacement** for OpenAI API in your apps
+- 📈 **Performance and queue monitoring endpoints**
+- 🧑‍💻 **Easy Python and CLI usage**
+- 🛡️ **Robust error handling and request management**
+
+---
+
+## Quickstart
+
+1. **Install** (Python 3.11+, Mac M-series):
+   ```bash
+   python3 -m venv oai-compat-server
+   source oai-compat-server/bin/activate
+   pip install git+https://github.com/cubist38/mlx-server-OAI-compat.git
+   ```
+2. **Run the server** (replace `<path-to-mlx-model>`):
+   ```bash
+   python -m app.main --model-path <path-to-mlx-model> --model-type lm
+   ```
+3. **Test with OpenAI client:**
+   ```python
+   import openai
+   client = openai.OpenAI(base_url="http://localhost:8000/v1", api_key="not-needed")
+   response = client.chat.completions.create(
+       model="local-model",
+       messages=[{"role": "user", "content": "Hello!"}]
+   )
+   print(response.choices[0].message.content)
+   ```
+
+---
 
 ## OpenAI Compatibility
 
 This server implements the OpenAI API interface, allowing you to use it as a drop-in replacement for OpenAI's services in your applications. It supports:
 - Chat completions (both streaming and non-streaming)
 - Vision-language model interactions
-- Text embeddings generation (with text-only models)
+- Embeddings generation
 - Standard OpenAI request/response formats
 - Common OpenAI parameters (temperature, top_p, etc.)
 
@@ -193,6 +257,53 @@ batch_response = client.embeddings.create(
 )
 print(f"Number of embeddings: {len(batch_response.data)}")
 ```
+
+### Vision-Language Embeddings Example
+
+You can generate embeddings for both text and images using a vision-language model (VLM) via the OpenAI-compatible API. Below is a Python example using the OpenAI client and Pillow for image processing:
+
+#### 1. Install dependencies
+```bash
+pip install openai pillow
+```
+
+#### 2. Connect to the MLX Server
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="fake-api-key")
+```
+
+#### 3. Encode your image as a base64 data URI
+```python
+from PIL import Image
+from io import BytesIO
+import base64
+
+def image_to_base64(image):
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    buffer.seek(0)
+    image_data = buffer.getvalue()
+    image_base64 = base64.b64encode(image_data).decode('utf-8')
+    return f"data:image/png;base64,{image_base64}"
+
+image = Image.open("images/attention.png")
+image_uri = image_to_base64(image)
+```
+
+#### 4. Request an embedding for text and image
+```python
+response = client.embeddings.create(
+    input=["Describe the image in detail"],
+    model="mlx-community/Qwen2.5-VL-3B-Instruct-4bit",
+    extra_body={"image_url": image_uri}
+)
+print(len(response.data[0].embedding))  # Prints the embedding dimension
+```
+
+> **Note:** Replace the model name and image path as needed. The `extra_body` parameter is used to pass the image data URI to the API.
+
+This approach allows you to obtain a joint embedding for both text and image, which can be used for similarity search, retrieval, or other downstream tasks.
 
 ### CLI Usage
 
