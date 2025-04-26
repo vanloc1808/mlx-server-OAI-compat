@@ -211,6 +211,7 @@ class MLXLMHandler:
             # Create a unique request ID
             request_id = f"embeddings-{uuid.uuid4()}"
             request_data = {
+                "type": "embeddings",
                 "input": request.input,
                 "model": request.model
             }
@@ -240,7 +241,7 @@ class MLXLMHandler:
         """
         try:
             # Check if the request is for embeddings
-            if request_data.get("input"):
+            if request_data.get("type") == "embeddings":
                 return self.model.get_embeddings(request_data["input"])
 
             # Extract request parameters

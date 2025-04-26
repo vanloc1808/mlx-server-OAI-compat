@@ -91,15 +91,12 @@ async def embeddings(request: EmbeddingRequest, raw_request: Request):
     if handler is None:
         return JSONResponse(content=create_error_response("Model handler not initialized", "service_unavailable", 503), status_code=503)
 
-    if isinstance(handler, MLXLMHandler):
-        try:
-            embeddings = await handler.generate_embeddings_response(request)
-            return create_response_embeddings(embeddings, request.model)
-        except Exception as e:
-            logger.error(f"Error processing embedding request: {str(e)}", exc_info=True)
-            return JSONResponse(content=create_error_response(str(e)), status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
-    else:
-        return JSONResponse(content= create_error_response("VLM has not supported embeddings yet", "unsupported_request", 400), status_code=400)
+    try:
+        embeddings = await handler.generate_embeddings_response(request)
+        return create_response_embeddings(embeddings, request.model)
+    except Exception as e:
+        logger.error(f"Error processing embedding request: {str(e)}", exc_info=True)
+        return JSONResponse(content=create_error_response(str(e)), status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
     
 def create_response_embeddings(embeddings: List[float], model: str) -> EmbeddingResponse:
     embeddings_response = []

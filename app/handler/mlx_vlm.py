@@ -20,7 +20,7 @@ from app.core.image_processor import ImageProcessor
 from app.core.metrics import RequestMetrics
 from app.core.queue import RequestQueue
 from app.models.mlx_vlm import MLX_VLM
-from app.schemas.openai import ChatCompletionRequest
+from app.schemas.openai import ChatCompletionRequest, EmbeddingRequest
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -357,13 +357,55 @@ class MLXVLMHandler:
                 status_code=500,
                 detail=f"Failed to generate text response: {str(e)}"
             )
+        
+    async def generate_embeddings_response(self, request: EmbeddingRequest):
+        """
+        Generate embeddings for a given text input.
+        
+        Args:
+            request: EmbeddingRequest object containing the text input.
+        
+        Returns:
+            List[float]: Embeddings for the input text or images
+        """
+        try:
+            # Create a unique request ID
+            image_url = request.image_url
+            # Process the image URL to get a local file path
+            images = []
+            if request.image_url:
+                image_path = await self.image_processor.process_image_url(image_url)
+                images.append(image_path)
+            request_id = f"embeddings-{uuid.uuid4()}"
+            request_data = {
+                "type": "embeddings",
+                "input": request.input,
+                "model": request.model,
+                "images": images
+            }
+
+            # Submit to the request queue
+            response = await self.request_queue.submit(request_id, request_data)
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Error in embeddings generation: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to generate embeddings: {str(e)}"
+            )
 
 
     def __del__(self):
         """Cleanup resources on deletion."""
+        # Removed async cleanup from __del__; use close() instead
+        pass
 
+    async def close(self):
+        """Explicitly cleanup resources asynchronously."""
         if hasattr(self, 'image_processor'):
-            self.image_processor.cleanup()
+            await self.image_processor.cleanup()
 
     async def _process_request(self, request_data: Dict[str, Any]) -> str:
         """
@@ -376,6 +418,10 @@ class MLXVLMHandler:
             str: The model's response.
         """
         try:
+            # Check if the request is for embeddings
+            if request_data.get("type") == "embeddings":
+                return self.model.get_embeddings(request_data["input"], request_data["images"])
+            
             # Extract request parameters
             images = request_data.get("images", [])
             messages = request_data.get("messages", [])
