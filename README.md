@@ -19,12 +19,10 @@ This repository hosts a high-performance API server that provides OpenAI-compati
 - [Installation](#installation)
 - [Usage](#usage)
   - [Starting the Server](#starting-the-server)
-  - [Using the API](#using-the-api)
-  - [Vision-Language Embeddings Example](#vision-language-embeddings-example)
   - [CLI Usage](#cli-usage)
+  - [Using the API](#using-the-api)
 - [Request Queue System](#request-queue-system)
 - [Performance Monitoring](#performance-monitoring)
-- [API Usage](#api-usage)
 - [API Response Schemas](#api-response-schemas)
 - [Example Notebooks](#example-notebooks)
 - [Contributing](#contributing)
@@ -177,7 +175,7 @@ python -m app.main \
   --queue-size 100
 ```
 
-> **Note:** Text embeddings via the `/v1/embeddings` endpoint are only available with text-only models (`--model-type lm`).
+> **Note:** Text embeddings via the `/v1/embeddings` endpoint are now available with both text-only models (`--model-type lm`) and vision-language models (`--model-type vlm`).
 
 Vision-language model:
 ```bash
@@ -187,6 +185,20 @@ python -m app.main \
   --max-concurrency 1 \
   --queue-timeout 300 \
   --queue-size 100
+```
+
+### CLI Usage
+
+CLI commands:
+```bash
+mlx-server --version
+mlx-server --help
+mlx-server launch --help
+```
+
+To launch the server:
+```bash
+mlx-server launch --model-path <path-to-mlx-model> --model-type <lm|vlm> --port 8000
 ```
 
 ### Using the API
@@ -247,6 +259,8 @@ print(response.choices[0].message.content)
 ```
 
 #### Embeddings
+
+1. Text-only model embeddings:
 ```python
 import openai
 
@@ -257,14 +271,14 @@ client = openai.OpenAI(
 
 # Generate embeddings for a single text
 embedding_response = client.embeddings.create(
-    model="local-model",  # Model name doesn't matter for local server
+    model="mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-MLX-Q8",
     input=["The quick brown fox jumps over the lazy dog"]
 )
 print(f"Embedding dimension: {len(embedding_response.data[0].embedding)}")
 
 # Generate embeddings for multiple texts
 batch_response = client.embeddings.create(
-    model="local-model",
+    model="mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-MLX-Q8",
     input=[
         "Machine learning algorithms improve with more data",
         "Natural language processing helps computers understand human language",
@@ -274,28 +288,21 @@ batch_response = client.embeddings.create(
 print(f"Number of embeddings: {len(batch_response.data)}")
 ```
 
-### Vision-Language Embeddings Example
-
-You can generate embeddings for both text and images using a vision-language model (VLM) via the OpenAI-compatible API. Below is a Python example using the OpenAI client and Pillow for image processing:
-
-#### 1. Install dependencies
-```bash
-pip install openai pillow
-```
-
-#### 2. Connect to the MLX Server
+2. Vision-language model embeddings:
 ```python
-from openai import OpenAI
-client = OpenAI(base_url="http://localhost:8000/v1", api_key="fake-api-key")
-```
-
-#### 3. Encode your image as a base64 data URI
-```python
+import openai
+import base64
 from PIL import Image
 from io import BytesIO
-import base64
 
-def image_to_base64(image):
+client = openai.OpenAI(
+    base_url="http://localhost:8000/v1",
+    api_key="not-needed"
+)
+
+# Helper function to encode images as base64
+def image_to_base64(image_path):
+    image = Image.open(image_path)
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     buffer.seek(0)
@@ -303,52 +310,21 @@ def image_to_base64(image):
     image_base64 = base64.b64encode(image_data).decode('utf-8')
     return f"data:image/png;base64,{image_base64}"
 
-image = Image.open("images/attention.png")
-image_uri = image_to_base64(image)
-```
+# Encode the image
+image_uri = image_to_base64("images/attention.png")
 
-#### 4. Request an embedding for text and image
-```python
-response = client.embeddings.create(
-    input=["Describe the image in detail"],
+# Generate embeddings for text+image
+vision_embedding = client.embeddings.create(
     model="mlx-community/Qwen2.5-VL-3B-Instruct-4bit",
+    input=["Describe the image in detail"],
     extra_body={"image_url": image_uri}
 )
-print(len(response.data[0].embedding))  # Prints the embedding dimension
+print(f"Vision embedding dimension: {len(vision_embedding.data[0].embedding)}")
 ```
 
 > **Note:** Replace the model name and image path as needed. The `extra_body` parameter is used to pass the image data URI to the API.
 
-This approach allows you to obtain a joint embedding for both text and image, which can be used for similarity search, retrieval, or other downstream tasks.
-
-### CLI Usage
-
-You can also use the provided CLI command to launch the server:
-
-```bash
-mlx-server launch --model-path <path-to-mlx-model> --model-type <lm|vlm> --port 8000
-```
-
-All parameters available in the Python version are also available in the CLI:
-```bash
-mlx-server launch \
-  --model-path mlx-community/gemma-3-4b-it-4bit \
-  --model-type vlm \
-  --port 8000 \
-  --max-concurrency 1 \
-  --queue-timeout 300 \
-  --queue-size 100
-```
-
-#### CLI Commands
-```bash
-# Get help
-mlx-server --help
-mlx-server launch --help
-
-# Check version
-mlx-server --version
-```
+> **Warning:** Make sure you're running the server with `--model-type vlm` when making vision requests. If you send a vision request to a server running with `--model-type lm` (text-only model), you'll receive a 400 error with a message that vision requests are not supported with text-only models.
 
 ## Request Queue System
 
@@ -494,222 +470,6 @@ The performance metrics system is designed for reliability and accuracy:
 4. **Historical Tracking**: Maintains a history of recent requests for trend analysis
 5. **Error Resilience**: Continues operating even if some metrics fail to collect
 
-## API Usage
-
-### Text-Only Model Example
-
-```bash
-curl localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gemma-3-4b-it-4bit",
-    "messages": [
-      {
-        "role": "system",
-        "content": "You are a helpful assistant." 
-      },
-      {
-        "role": "user",
-        "content": "What is the capital of France?"
-      }
-    ],
-    "stream": false,
-    "max_tokens": 256,
-    "temperature": 0.7
-  }'
-```
-
-### Vision Model Example
-You can make vision requests to analyze images using the `/v1/chat/completions` endpoint when running with a VLM model:
-
-```bash
-curl localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "llava-phi-3-vision-4bit",
-    "messages": [
-      {
-        "role": "user",
-        "content": [
-          {
-            "type": "text",
-            "text": "What is in this image?"
-          },
-          {
-            "type": "image_url",
-            "image_url": {
-              "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
-            }
-          }
-        ]
-      }
-    ],
-    "stream": false,
-    "max_tokens": 256 
-  }'
-```
-
-### Embeddings Example
-```bash
-curl localhost:8000/v1/embeddings \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-MLX-Q8",
-    "input": ["The quick brown fox jumps over the lazy dog"]
-  }'
-```
-
-Response format:
-```json
-{
-  "object": "list",
-  "data": [
-    {
-      "object": "embedding",
-      "embedding": [0.0123, ..., 0.9876],
-      "index": 0
-    }
-  ],
-  "model": "mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-MLX-Q8"
-}
-```
-
-You can also generate embeddings for multiple texts in a single request:
-
-```bash
-curl localhost:8000/v1/embeddings \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-MLX-Q8",
-    "input": [
-      "The quick brown fox jumps over the lazy dog", 
-      "Machine learning models require training data", 
-      "Neural networks are inspired by biological neurons"
-    ]
-  }'
-```
-
-> **Note:** The server currently supports text embeddings only with `--model-type lm` (text-only models). Embeddings are not yet supported with vision-language models. See the included `examples/embeddings_examples.ipynb` notebook for detailed examples of using embeddings for semantic search, similarity comparison, and other applications.
-
-> **Warning:** Make sure you're running the server with `--model-type vlm` when making vision requests. If you send a vision request to a server running with `--model-type lm` (text-only model), you'll receive a 400 error with a message that vision requests are not supported with text-only models.
-
-### Request Format
-- `model`: Optional model identifier (the server will use the loaded model regardless)
-- `messages`: Array of message objects containing:
-  - `role`: The role of the message sender ("user", "assistant", or "system")
-  - `content`: 
-    - For text models: A string containing the message
-    - For vision models: An array of content objects:
-      - `type`: Either "text" or "image_url"
-      - `text`: The text prompt (for type "text")
-      - `image_url`: Object containing the image URL (for type "image_url")
-- `stream`: Optional boolean to enable streaming responses
-- Additional parameters: `temperature`, `max_tokens`, `top_p`, etc.
-
-For embeddings:
-- `model`: Optional model identifier
-- `input`: String or array of strings to generate embeddings for
-
-### Response Format
-The server will return responses in OpenAI-compatible format:
-
-```json
-{
-  "id": "chatcmpl-1234567890",
-  "object": "chat.completion",
-  "created": 1234567890,
-  "choices": [
-    {
-      "index": 0,
-      "message": {
-        "role": "assistant",
-        "content": "The capital of France is Paris."
-      },
-      "finish_reason": "stop"
-    }
-  ]
-}
-```
-
-### Streaming Responses
-For streaming responses, add `"stream": true` to your request. The response will be in Server-Sent Events (SSE) format:
-
-```bash
-curl localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "stream": true,
-    "messages": [
-      {
-        "role": "user",
-        "content": "Tell me about Paris"
-      }
-    ] 
-  }'
-```
-
-### Multi-turn Conversations
-The API supports multi-turn conversations for both text-only and vision models:
-
-#### Text-Only Model Example:
-```json
-{
-  "messages": [
-    {
-      "role": "system",
-      "content": "You are a helpful assistant."
-    },
-    {
-      "role": "user",
-      "content": "What is the capital of France?"
-    },
-    {
-      "role": "assistant",
-      "content": "The capital of France is Paris."
-    },
-    {
-      "role": "user",
-      "content": "Tell me some interesting facts about it."
-    }
-  ]
-}
-```
-
-#### Vision Model Example:
-```json
-{
-  "messages": [
-    {
-      "role": "system",
-      "content": "You are a helpful assistant that describes images."
-    },
-    {
-      "role": "user",
-      "content": [
-        {
-          "type": "text",
-          "text": "What is in this image?"
-        },
-        {
-          "type": "image_url",
-          "image_url": {
-            "url": "https://example.com/image.jpg"
-          }
-        }
-      ]
-    },
-    {
-      "role": "assistant",
-      "content": "The image shows a wooden boardwalk..."
-    },
-    {
-      "role": "user",
-      "content": "Are there any people in the image?"
-    }
-  ]
-}
-```
-
 ## API Response Schemas
 
 The server implements comprehensive Pydantic schemas for request and response handling, ensuring type safety and validation:
@@ -773,7 +533,7 @@ The repository includes example notebooks to help you get started with different
   - Multi-turn conversations with images
   - Using vision models for detailed image description and analysis
 
-- **embeddings_examples.ipynb**: A comprehensive guide to using the embeddings API, including:
+- **lm_embeddings_examples.ipynb**: A comprehensive guide to using the embeddings API for text-only models, including:
   - Generating embeddings for single and batch inputs
   - Computing semantic similarity between texts
   - Building a simple vector-based search system
