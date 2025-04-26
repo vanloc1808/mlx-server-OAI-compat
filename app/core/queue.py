@@ -214,4 +214,9 @@ class RequestQueue:
             "max_queue_size": self.queue_size,
             "active_requests": len(self.active_requests),
             "max_concurrency": self.max_concurrency
-        } 
+        }
+
+    # Alias for the async stop method to maintain consistency in cleanup interfaces
+    async def stop_async(self):
+        """Alias for stop - stops the queue worker asynchronously."""
+        await self.stop() 

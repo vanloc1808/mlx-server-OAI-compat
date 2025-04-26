@@ -112,7 +112,7 @@ def create_response_chunk(content: str, model: str, is_final: bool = False) -> C
         model=model,
         choices=[ChatCompletionChoice(
             index=0,
-            delta={} if is_final else {"content": content},
+            delta={"content": content},
             finish_reason="stop" if is_final else None
         )]
     )
