@@ -1,9 +1,72 @@
 # mlx-server-OAI-compat
 
+[![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/release/python-3110/)
+
 ## Description
 This repository hosts a high-performance API server that provides OpenAI-compatible endpoints for MLX models. Developed using Python and powered by the FastAPI framework, it provides an efficient, scalable, and user-friendly solution for running MLX-based vision and language models locally with an OpenAI-compatible interface.
 
 > **Note:** This project currently supports **MacOS with M-series chips** only as it specifically leverages MLX, Apple's framework optimized for Apple Silicon.
+
+---
+
+## Table of Contents
+- [Key Features](#key-features)
+- [Quickstart](#quickstart)
+- [Demo](#demo)
+- [OpenAI Compatibility](#openai-compatibility)
+- [Supported Model Types](#supported-model-types)
+- [Installation](#installation)
+- [Usage](#usage)
+  - [Starting the Server](#starting-the-server)
+  - [Using the API](#using-the-api)
+  - [Vision-Language Embeddings Example](#vision-language-embeddings-example)
+  - [CLI Usage](#cli-usage)
+- [Request Queue System](#request-queue-system)
+- [Performance Monitoring](#performance-monitoring)
+- [API Usage](#api-usage)
+- [API Response Schemas](#api-response-schemas)
+- [Example Notebooks](#example-notebooks)
+- [Contributing](#contributing)
+- [License](#license)
+- [Support](#support)
+- [Acknowledgments](#acknowledgments)
+- [FAQ](#faq)
+
+---
+
+## Key Features
+- 🚀 **Fast, local OpenAI-compatible API** for MLX models
+- 🖼️ **Vision-language and text-only model support**
+- 🔌 **Drop-in replacement** for OpenAI API in your apps
+- 📈 **Performance and queue monitoring endpoints**
+- 🧑‍💻 **Easy Python and CLI usage**
+- 🛡️ **Robust error handling and request management**
+
+---
+
+## Quickstart
+
+1. **Install** (Python 3.11+, Mac M-series):
+   ```bash
+   python3 -m venv oai-compat-server
+   source oai-compat-server/bin/activate
+   pip install git+https://github.com/cubist38/mlx-server-OAI-compat.git
+   ```
+2. **Run the server** (replace `<path-to-mlx-model>`):
+   ```bash
+   python -m app.main --model-path <path-to-mlx-model> --model-type lm
+   ```
+3. **Test with OpenAI client:**
+   ```python
+   import openai
+   client = openai.OpenAI(base_url="http://localhost:8000/v1", api_key="not-needed")
+   response = client.chat.completions.create(
+       model="local-model",
+       messages=[{"role": "user", "content": "Hello!"}]
+   )
+   print(response.choices[0].message.content)
+   ```
 
 ## Demo
 
@@ -20,12 +83,14 @@ Check out our [video demonstration](https://youtu.be/BMXOWK1Okk4) to see the ser
   </a>
 </p>
 
+---
+
 ## OpenAI Compatibility
 
 This server implements the OpenAI API interface, allowing you to use it as a drop-in replacement for OpenAI's services in your applications. It supports:
 - Chat completions (both streaming and non-streaming)
 - Vision-language model interactions
-- Text embeddings generation (with text-only models)
+- Embeddings generation
 - Standard OpenAI request/response formats
 - Common OpenAI parameters (temperature, top_p, etc.)
 
@@ -209,6 +274,53 @@ batch_response = client.embeddings.create(
 print(f"Number of embeddings: {len(batch_response.data)}")
 ```
 
+### Vision-Language Embeddings Example
+
+You can generate embeddings for both text and images using a vision-language model (VLM) via the OpenAI-compatible API. Below is a Python example using the OpenAI client and Pillow for image processing:
+
+#### 1. Install dependencies
+```bash
+pip install openai pillow
+```
+
+#### 2. Connect to the MLX Server
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="fake-api-key")
+```
+
+#### 3. Encode your image as a base64 data URI
+```python
+from PIL import Image
+from io import BytesIO
+import base64
+
+def image_to_base64(image):
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    buffer.seek(0)
+    image_data = buffer.getvalue()
+    image_base64 = base64.b64encode(image_data).decode('utf-8')
+    return f"data:image/png;base64,{image_base64}"
+
+image = Image.open("images/attention.png")
+image_uri = image_to_base64(image)
+```
+
+#### 4. Request an embedding for text and image
+```python
+response = client.embeddings.create(
+    input=["Describe the image in detail"],
+    model="mlx-community/Qwen2.5-VL-3B-Instruct-4bit",
+    extra_body={"image_url": image_uri}
+)
+print(len(response.data[0].embedding))  # Prints the embedding dimension
+```
+
+> **Note:** Replace the model name and image path as needed. The `extra_body` parameter is used to pass the image data URI to the API.
+
+This approach allows you to obtain a joint embedding for both text and image, which can be used for similarity search, retrieval, or other downstream tasks.
+
 ### CLI Usage
 
 You can also use the provided CLI command to launch the server:
@@ -314,22 +426,19 @@ The queue system handles various error conditions:
 
 The server includes comprehensive performance monitoring to help track and optimize model performance.
 
-### Key Metrics
+### Key Features
 
-- **Tokens Per Second (TPS)**: Real-time tracking of token generation speed
-- **Time To First Token (TTFT)**: Measures latency from request to first token generation
-- **Throughput**: Tracks overall request processing capacity (requests per second)
-- **Total Requests**: Cumulative count of all processed requests
-- **Error Count**: Tracks the number of failed requests
-
-### Metrics System Architecture
-
-The performance metrics system uses a `RequestMetrics` class that:
-
-1. **Rolling Averages**: Maintains running averages for key performance indicators
-2. **Request-type Tracking**: Logs metrics by request type (chat completions, embeddings, etc.)
-3. **Automatic Logging**: Records key metrics for each request completion
-4. **Token Estimation**: Provides approximate token count estimation for text inputs
+- **Token Generation Speed**: Real-time tracking of tokens per second (TPS)
+- **Request Metrics**: Detailed statistics for each request:
+  - Token counts
+  - Word counts
+  - Processing time
+  - Success/failure rates
+- **Performance History**: Maintains historical data for trend analysis
+- **Request Type Analysis**: Separate metrics for different request types:
+  - Vision vs. text requests
+  - Streaming vs. non-streaming requests
+- **Error Tracking**: Monitors and categorizes different types of errors
 
 ### Performance Metrics
 
@@ -352,24 +461,38 @@ Example response with performance data:
   },
   "metrics": {
     "total_requests": 100,
-    "performance": {
-      "tps": 99.0,
-      "ttft": 150.0,
-      "throughput": 2.5
+    "total_tokens": 5000,
+    "total_time": 50.5,
+    "request_types": {
+      "vision": 40,
+      "vision_stream": 20,
+      "text": 30,
+      "text_stream": 10
     },
-    "error_count": 2
+    "error_count": 2,
+    "performance": {
+      "avg_tps": 99.0,
+      "max_tps": 150.0,
+      "min_tps": 50.0,
+      "recent_requests": 100
+    }
   }
 }
 ```
 
-### Performance Optimization
+### Metrics System Design
 
-Based on metrics collected, you can optimize server performance:
+The performance metrics system is designed for reliability and accuracy:
 
-1. **Concurrency Tuning**: Adjust `--max-concurrency` based on throughput metrics
-2. **Queue Size Management**: Configure `--queue-size` to handle expected request volumes
-3. **Model Selection**: Compare TPS across different quantization levels (4-bit vs 8-bit)
-4. **Resource Allocation**: Monitor TTFT to ensure acceptable response latency
+1. **Standardized Metrics**: All request handlers use a consistent metrics format
+2. **Fault Tolerance**: The system includes fallbacks for missing data:
+   ```python
+   # Example of safe metrics access
+   self.metrics["total_tokens"] += metrics.get("token_count", metrics.get("estimated_tokens", 0))
+   ```
+3. **Real-time Updates**: Metrics are updated as requests are processed
+4. **Historical Tracking**: Maintains a history of recent requests for trend analysis
+5. **Error Resilience**: Continues operating even if some metrics fail to collect
 
 ## API Usage
 

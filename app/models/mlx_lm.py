@@ -6,7 +6,6 @@ from mlx_lm.generate import (
 )
 from mlx_lm.sample_utils import make_sampler
 from typing import List, Dict, Union, Generator, Optional, Tuple
-import numpy as np
 
 DEFAULT_TEMPERATURE = 0.0
 DEFAULT_TOP_P = 1.0
@@ -32,9 +31,14 @@ class MLX_LM:
             raise ValueError(f"Error loading model: {str(e)}")
         
     def _apply_pooling_strategy(self, embeddings: mx.array) -> mx.array:
-        # Pooling strategy: mean with optimized computation
-        return mx.mean(embeddings, axis=1)
-
+        embeddings = mx.mean(embeddings, axis=1)
+        return embeddings
+    
+    def _apply_l2_normalization(self, embeddings: mx.array) -> mx.array:
+        l2_norms = mx.linalg.norm(embeddings, axis=1, keepdims=True)
+        embeddings = embeddings / (l2_norms +  1e-8)
+        return embeddings
+    
     def _batch_process(self, prompts: List[str], batch_size: int = DEFAULT_BATCH_SIZE) -> List[List[int]]:
         """Process prompts in batches with optimized tokenization."""
         all_tokenized = []
@@ -69,7 +73,8 @@ class MLX_LM:
     def get_embeddings(
         self, 
         prompts: List[str], 
-        batch_size: int = DEFAULT_BATCH_SIZE
+        batch_size: int = DEFAULT_BATCH_SIZE,
+        normalize: bool = True
     ) -> List[float]:
         """
         Get embeddings for a list of prompts efficiently.
@@ -93,6 +98,8 @@ class MLX_LM:
             # Compute embeddings for batch
             batch_embeddings = self.model.model(tokenized_batch)
             pooled_embedding = self._apply_pooling_strategy(batch_embeddings)
+            if normalize:
+                pooled_embedding = self._apply_l2_normalization(pooled_embedding)
             all_embeddings.extend(pooled_embedding.tolist())
 
         return all_embeddings

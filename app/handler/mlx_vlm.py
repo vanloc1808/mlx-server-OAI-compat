@@ -1,17 +1,26 @@
 import asyncio
 import base64
+import hashlib
 import logging
+import os
+import tempfile
 import time
 import uuid
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
+from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
 
+import requests
 from fastapi import HTTPException
+from PIL import Image
 
 from app.core.image_processor import ImageProcessor
 from app.core.metrics import RequestMetrics
 from app.core.queue import RequestQueue
 from app.models.mlx_vlm import MLX_VLM
-from app.schemas.openai import ChatCompletionRequest
+from app.schemas.openai import ChatCompletionRequest, EmbeddingRequest
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -33,7 +42,8 @@ class MLXVLMHandler:
         """
         self.model_path = model_path
         self.model = MLX_VLM(model_path)
-        self.image_processor = ImageProcessor(max_workers)
+        self.temp_dir = tempfile.mkdtemp(prefix="mlx_vlm_")
+        self.image_processor = ImageProcessor(self.temp_dir, max_workers)
         
         # Initialize request queue for vision and text tasks
         # We use the same queue for both vision and text tasks for simplicity
@@ -79,9 +89,9 @@ class MLXVLMHandler:
         try:
             # Start timing
             start_time = time.time()
-            request_start = time.time()
-            first_token_time = None
             total_tokens = 0
+            total_words = 0
+            total_chars = 0
 
             chat_messages, image_paths, model_params = await self._prepare_vision_request(request)
             
@@ -97,13 +107,8 @@ class MLXVLMHandler:
             response_generator = await self.request_queue.submit(request_id, request_data)
             
             # Process and yield each chunk asynchronously
-            first_chunk = True
             for chunk in response_generator:
                 if chunk:
-                    if first_chunk:
-                        first_token_time = time.time() - request_start
-                        first_chunk = False
-                        
                     text_chunk = ""
                     if hasattr(chunk, 'text'):
                         text_chunk = chunk.text
@@ -114,21 +119,24 @@ class MLXVLMHandler:
                     
                     # Update token count
                     if text_chunk:
-                        total_tokens += RequestMetrics.estimate_tokens(text_chunk)["estimated_tokens"]
+                        chunk_metrics = RequestMetrics.estimate_tokens(text_chunk)
+                        total_tokens += chunk_metrics["estimated_tokens"]
+                        total_words += chunk_metrics["word_count"]
+                        total_chars += chunk_metrics["char_count"]
                     
                     yield text_chunk
             
-            # Calculate metrics
+            # Calculate and log TPS statistics
             elapsed_time = time.time() - start_time
             tps = total_tokens / elapsed_time if elapsed_time > 0 else 0
-            ttft = first_token_time * 1000 if first_token_time else 0  # Convert to ms
-            throughput = 1 / elapsed_time if elapsed_time > 0 else 0  # requests per second
             
             # Update metrics
             metrics = {
-                "tps": tps,
-                "ttft": ttft,
-                "throughput": throughput
+                "token_count": total_tokens,
+                "word_count": total_words,
+                "char_count": total_chars,
+                "elapsed_time": elapsed_time,
+                "tps": tps
             }
             self.metrics.update("vision_stream", metrics)
         
@@ -179,19 +187,17 @@ class MLXVLMHandler:
             # Submit to the vision queue and wait for result
             response = await self.request_queue.submit(request_id, request_data)
             
-            # Calculate metrics
+            # Calculate and log TPS statistics
             elapsed_time = time.time() - start_time
-            estimated_tokens = RequestMetrics.estimate_tokens(response)["estimated_tokens"]
-            tps = estimated_tokens / elapsed_time if elapsed_time > 0 else 0
-            ttft = elapsed_time * 1000  # Convert to ms (for non-streaming, TTFT is full response time)
-            throughput = 1 / elapsed_time if elapsed_time > 0 else 0  # requests per second
+            metrics = RequestMetrics.estimate_tokens(response)
+            tps = metrics["estimated_tokens"] / elapsed_time if elapsed_time > 0 else 0
             
             # Update metrics
-            metrics = {
+            metrics.update({
+                "elapsed_time": elapsed_time,
                 "tps": tps,
-                "ttft": ttft,
-                "throughput": throughput
-            }
+                "token_count": metrics["estimated_tokens"]
+            })
             self.metrics.update("vision", metrics)
             
             return response
@@ -227,9 +233,9 @@ class MLXVLMHandler:
         try:
             # Start timing
             start_time = time.time()
-            request_start = time.time()
-            first_token_time = None
             total_tokens = 0
+            total_words = 0
+            total_chars = 0
             
             # Prepare the text request
             chat_messages, model_params = await self._prepare_text_request(request)
@@ -245,13 +251,8 @@ class MLXVLMHandler:
             response_generator = await self.request_queue.submit(request_id, request_data)
             
             # Process and yield each chunk
-            first_chunk = True
             for chunk in response_generator:
                 if chunk:
-                    if first_chunk:
-                        first_token_time = time.time() - request_start
-                        first_chunk = False
-                        
                     text_chunk = ""
                     if hasattr(chunk, 'text'):
                         text_chunk = chunk.text
@@ -262,21 +263,24 @@ class MLXVLMHandler:
                     
                     # Update token count
                     if text_chunk:
-                        total_tokens += RequestMetrics.estimate_tokens(text_chunk)["estimated_tokens"]
+                        chunk_metrics = RequestMetrics.estimate_tokens(text_chunk)
+                        total_tokens += chunk_metrics["estimated_tokens"]
+                        total_words += chunk_metrics["word_count"]
+                        total_chars += chunk_metrics["char_count"]
                     
                     yield text_chunk
             
-            # Calculate metrics
+            # Calculate and log TPS statistics
             elapsed_time = time.time() - start_time
             tps = total_tokens / elapsed_time if elapsed_time > 0 else 0
-            ttft = first_token_time * 1000 if first_token_time else 0  # Convert to ms
-            throughput = 1 / elapsed_time if elapsed_time > 0 else 0  # requests per second
             
             # Update metrics
             metrics = {
-                "tps": tps,
-                "ttft": ttft,
-                "throughput": throughput
+                "token_count": total_tokens,
+                "word_count": total_words,
+                "char_count": total_chars,
+                "elapsed_time": elapsed_time,
+                "tps": tps
             }
             self.metrics.update("text_stream", metrics)
             
@@ -322,22 +326,20 @@ class MLXVLMHandler:
             # Start timing
             start_time = time.time()
             
-            # Submit to the request queue
+            # Submit to the vision queue (reusing the same queue for text requests)
             response = await self.request_queue.submit(request_id, request_data)
             
-            # Calculate metrics
+            # Calculate and log TPS statistics
             elapsed_time = time.time() - start_time
-            estimated_tokens = RequestMetrics.estimate_tokens(response)["estimated_tokens"]
-            tps = estimated_tokens / elapsed_time if elapsed_time > 0 else 0
-            ttft = elapsed_time * 1000  # Convert to ms (for non-streaming, TTFT is full response time)
-            throughput = 1 / elapsed_time if elapsed_time > 0 else 0  # requests per second
+            metrics = RequestMetrics.estimate_tokens(response)
+            tps = metrics["estimated_tokens"] / elapsed_time if elapsed_time > 0 else 0
             
             # Update metrics
-            metrics = {
+            metrics.update({
+                "elapsed_time": elapsed_time,
                 "tps": tps,
-                "ttft": ttft,
-                "throughput": throughput
-            }
+                "token_count": metrics["estimated_tokens"]
+            })
             self.metrics.update("text", metrics)
             
             return response
@@ -355,39 +357,55 @@ class MLXVLMHandler:
                 status_code=500,
                 detail=f"Failed to generate text response: {str(e)}"
             )
+        
+    async def generate_embeddings_response(self, request: EmbeddingRequest):
+        """
+        Generate embeddings for a given text input.
+        
+        Args:
+            request: EmbeddingRequest object containing the text input.
+        
+        Returns:
+            List[float]: Embeddings for the input text or images
+        """
+        try:
+            # Create a unique request ID
+            image_url = request.image_url
+            # Process the image URL to get a local file path
+            images = []
+            if request.image_url:
+                image_path = await self.image_processor.process_image_url(image_url)
+                images.append(image_path)
+            request_id = f"embeddings-{uuid.uuid4()}"
+            request_data = {
+                "type": "embeddings",
+                "input": request.input,
+                "model": request.model,
+                "images": images
+            }
+
+            # Submit to the request queue
+            response = await self.request_queue.submit(request_id, request_data)
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Error in embeddings generation: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to generate embeddings: {str(e)}"
+            )
 
 
     def __del__(self):
         """Cleanup resources on deletion."""
-        try:
-            if hasattr(self, 'image_processor'):
-                # Use synchronous cleanup instead of trying to call an async method
-                # This prevents the "coroutine was never awaited" warning
-                
-                # For RequestQueue, create a non-blocking synchronous shutdown
-                if hasattr(self, 'request_queue') and hasattr(self.request_queue, '_running') and self.request_queue._running:
-                    # Just set internal state to not running to stop accepting new requests
-                    self.request_queue._running = False
-                
-                # Close the temp directory without awaiting the coroutine
-                if hasattr(self.image_processor, 'temp_dir'):
-                    self.image_processor.temp_dir.cleanup()
-                    
-                # Close any session that might be open
-                if hasattr(self.image_processor, '_session') and self.image_processor._session and not self.image_processor._session.closed:
-                    # We can't await the close() method here, so we need to handle it differently
-                    import asyncio
-                    loop = asyncio.get_event_loop() if asyncio.get_event_loop().is_running() else None
-                    if loop:
-                        # Create a task to close the session if a loop is running
-                        loop.create_task(self.image_processor._session.close())
-                        
-                # Shutdown the executor
-                if hasattr(self.image_processor, 'executor'):
-                    self.image_processor.executor.shutdown(wait=False)
-        except Exception as e:
-            # We can't log here as the logging system might be shut down
-            pass
+        # Removed async cleanup from __del__; use close() instead
+        pass
+
+    async def close(self):
+        """Explicitly cleanup resources asynchronously."""
+        if hasattr(self, 'image_processor'):
+            await self.image_processor.cleanup()
 
     async def _process_request(self, request_data: Dict[str, Any]) -> str:
         """
@@ -400,6 +418,10 @@ class MLXVLMHandler:
             str: The model's response.
         """
         try:
+            # Check if the request is for embeddings
+            if request_data.get("type") == "embeddings":
+                return self.model.get_embeddings(request_data["input"], request_data["images"])
+            
             # Extract request parameters
             images = request_data.get("images", [])
             messages = request_data.get("messages", [])
@@ -661,13 +683,3 @@ class MLXVLMHandler:
                 base64.b64decode(encoded)
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Invalid base64 image: {str(e)}")
-
-    async def cleanup(self):
-        """Async method to properly clean up resources when shutting down."""
-        if hasattr(self, 'request_queue'):
-            await self.request_queue.stop_async()
-            
-        if hasattr(self, 'image_processor'):
-            await self.image_processor.cleanup()
-        
-        logger.info("MLXVLMHandler resources cleaned up properly")

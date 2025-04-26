@@ -54,7 +54,8 @@ class EmbeddingRequest(BaseModel):
     """
     model: str = Config.EMBEDDING_MODEL     # Model to use, defaults to embedding model
     input: List[str] = Field(..., description="List of text inputs for embedding")  # Text inputs to embed
-
+    image_url: str = Field(default=None, description="Image URL to embed") # Image URL to embed
+ 
 class ChatCompletionRequest(BaseModel):
     """
     Model for chat completion requests, including messages, streaming option, and tools.
