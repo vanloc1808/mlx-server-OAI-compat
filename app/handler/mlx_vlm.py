@@ -42,8 +42,7 @@ class MLXVLMHandler:
         """
         self.model_path = model_path
         self.model = MLX_VLM(model_path)
-        self.temp_dir = tempfile.mkdtemp(prefix="mlx_vlm_")
-        self.image_processor = ImageProcessor(self.temp_dir, max_workers)
+        self.image_processor = ImageProcessor(max_workers)
         
         # Initialize request queue for vision and text tasks
         # We use the same queue for both vision and text tasks for simplicity

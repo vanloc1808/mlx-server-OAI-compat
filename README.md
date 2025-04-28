@@ -539,6 +539,13 @@ The repository includes example notebooks to help you get started with different
   - Building a simple vector-based search system
   - Comparing semantic relationships between concepts
 
+- **vlm_embeddings_examples.ipynb**: A detailed guide to working with Vision-Language Model embeddings, including:
+  - Generating embeddings for images with text prompts
+  - Creating text-only embeddings with VLMs
+  - Calculating similarity between text and image representations
+  - Understanding the shared embedding space of multimodal models
+  - Practical applications of VLM embeddings
+
 ## Contributing
 We welcome contributions to improve this project! Here's how you can contribute:
 1. Fork the repository to your GitHub account.
