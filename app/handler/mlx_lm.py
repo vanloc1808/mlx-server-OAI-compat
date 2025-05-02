@@ -368,7 +368,8 @@ class MLXLMHandler:
                     "presence_penalty": request.presence_penalty,
                     "stop": request.stop,
                     "n": request.n,
-                    "seed": request.seed
+                    "seed": request.seed,
+                    "enable_thinking": request.enable_thinking
                 }.items() if v is not None
             }
 

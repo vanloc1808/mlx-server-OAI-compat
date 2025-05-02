@@ -136,7 +136,7 @@ class MLX_LM:
         chat_template_kwargs = {
             "add_generation_prompt": True,
             "tools": kwargs.get("tools", None),
-            "enable_thinking": kwargs.get("enable_thinking", False)
+            "enable_thinking": kwargs.get("enable_thinking", True)
         }
 
         # Prepare input tokens

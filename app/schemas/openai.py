@@ -79,6 +79,7 @@ class ChatCompletionRequestBase(BaseModel):
     response_format: Optional[Dict[str, str]] = None
     seed: Optional[int] = None
     user: Optional[str] = None
+    enable_thinking: Optional[bool] = False
 
     @validator("messages")
     def check_messages_not_empty(cls, v):
