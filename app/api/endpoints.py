@@ -120,6 +120,7 @@ def create_response_chunk(chunk: Union[str, Dict[str, Any]], model: str, is_fina
         )
     if "name" in chunk:
         tool_chunk = ChoiceDeltaToolCall(
+            index=chunk["index"],
             type="function",
             id=get_tool_call_id(),
             function=ChoiceDeltaFunctionCall(
@@ -129,6 +130,7 @@ def create_response_chunk(chunk: Union[str, Dict[str, Any]], model: str, is_fina
         )
     else:
         tool_chunk = ChoiceDeltaToolCall(
+            index=chunk["index"],
             function= ChoiceDeltaFunctionCall(
                 arguments=chunk["arguments"]
             )
@@ -152,6 +154,7 @@ async def handle_stream_response(generator, model: str):
     """Handle streaming response generation."""
     try:
         finish_reason = "stop"
+        index = 0   
         async for chunk in generator:
             if chunk:
                 if isinstance(chunk, str):
@@ -160,15 +163,18 @@ async def handle_stream_response(generator, model: str):
                 else:
                     finish_reason = "function_call"
                     function = {
+                        "index": index,
                         "name": chunk["name"],
                     }
                     response_chunk = create_response_chunk(function, model)
                     yield f"data: {json.dumps(response_chunk.model_dump())}\n\n"
                     function_call = {
+                        "index": index,
                         "arguments": json.dumps(chunk["arguments"])
                     }
                     response_chunk = create_response_chunk(function_call, model)
                     yield f"data: {json.dumps(response_chunk.model_dump())}\n\n"
+                    index += 1
 
     except Exception as e:
         logger.error(f"Error in stream wrapper: {str(e)}")
