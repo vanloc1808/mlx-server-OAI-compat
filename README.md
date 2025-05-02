@@ -89,6 +89,7 @@ This server implements the OpenAI API interface, allowing you to use it as a dro
 - Chat completions (both streaming and non-streaming)
 - Vision-language model interactions
 - Embeddings generation
+- Function calling and tool use
 - Standard OpenAI request/response formats
 - Common OpenAI parameters (temperature, top_p, etc.)
 
@@ -256,6 +257,75 @@ response = client.chat.completions.create(
     ]
 )
 print(response.choices[0].message.content)
+```
+
+#### Function Calling
+```python
+import openai
+
+client = openai.OpenAI(
+    base_url="http://localhost:8000/v1",
+    api_key="not-needed"
+)
+
+# Define the messages and tools
+messages = [
+    {
+        "role": "user",
+        "content": "What is the weather in Tokyo?"
+    }
+]
+
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get the weather in a given city",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string", "description": "The city to get the weather for"}
+                }
+            }
+        }
+    }
+]
+
+# Make the API call
+completion = client.chat.completions.create(
+    model="local-model",
+    messages=messages,
+    tools=tools,
+    tool_choice="auto"
+)
+
+# Handle the tool call response
+if completion.choices[0].message.tool_calls:
+    tool_call = completion.choices[0].message.tool_calls[0]
+    print(f"Function called: {tool_call.function.name}")
+    print(f"Arguments: {tool_call.function.arguments}")
+    
+    # Process the tool call - typically you would call your actual function here
+    # For this example, we'll just hardcode a weather response
+    weather_info = {"temperature": "22°C", "conditions": "Sunny", "humidity": "65%"}
+    
+    # Add the tool call and function response to the conversation
+    messages.append(completion.choices[0].message)
+    messages.append({
+        "role": "tool",
+        "tool_call_id": tool_call.id,
+        "name": tool_call.function.name,
+        "content": str(weather_info)
+    })
+    
+    # Continue the conversation with the function result
+    final_response = client.chat.completions.create(
+        model="local-model",
+        messages=messages
+    )
+    print("\nFinal response:")
+    print(final_response.choices[0].message.content)
 ```
 
 #### Embeddings
@@ -526,6 +596,13 @@ The server supports streaming responses with proper chunk formatting:
 ## Example Notebooks
 
 The repository includes example notebooks to help you get started with different aspects of the API:
+
+- **function_calling_examples.ipynb**: A practical guide to implementing and using function calling with local models, including:
+  - Setting up function definitions
+  - Making function calling requests
+  - Handling function call responses
+  - Working with streaming function calls
+  - Building multi-turn conversations with tool use
 
 - **vision_examples.ipynb**: A comprehensive guide to using the vision capabilities of the API, including:
   - Processing image inputs in various formats
