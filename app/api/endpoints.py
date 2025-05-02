@@ -8,13 +8,13 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.schemas.openai import (
-    ChatCompletionRequest, EmbeddingRequest, Embedding,
-    ChatCompletionResponse, ChatCompletionChunk, EmbeddingResponse,
-    ChatCompletionChoice, Message
+    EmbeddingRequest, Embedding, EmbeddingResponse, 
+    ChatCompletionRequest, ChatCompletionChunk, Choice, Message, FunctionCall, StreamingChoice,
+    ChatCompletionResponse, ChatCompletionMessageToolCall, ChoiceDeltaToolCall, ChoiceDeltaFunctionCall, Delta
 )
 from app.utils.errors import create_error_response
 from app.handler.mlx_lm import MLXLMHandler
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 
 router = APIRouter()
 
@@ -104,32 +104,78 @@ def create_response_embeddings(embeddings: List[float], model: str) -> Embedding
         embeddings_response.append(Embedding(embedding=embedding, index=index))
     return EmbeddingResponse(data=embeddings_response, model=model)
 
-def create_response_chunk(content: str, model: str, is_final: bool = False) -> ChatCompletionChunk:
+def create_response_chunk(chunk: Union[str, Dict[str, Any]], model: str, is_final: bool = False, finish_reason: Optional[str] = "stop") -> ChatCompletionChunk:
     """Create a formatted response chunk for streaming."""
+    if isinstance(chunk, str):
+        return ChatCompletionChunk(
+            id=get_id(),
+            object="chat.completion.chunk",
+            created=int(time.time()),
+            model=model,
+            choices=[StreamingChoice(
+                index=0,
+                delta=Delta(content=chunk, role="assistant"),
+                finish_reason=finish_reason if is_final else None
+            )]
+        )
+    if "name" in chunk:
+        tool_chunk = ChoiceDeltaToolCall(
+            type="function",
+            id=get_tool_call_id(),
+            function=ChoiceDeltaFunctionCall(
+                name=chunk["name"],
+                arguments=""
+            )
+        )
+    else:
+        tool_chunk = ChoiceDeltaToolCall(
+            function= ChoiceDeltaFunctionCall(
+                arguments=chunk["arguments"]
+            )
+        )
+    delta = Delta(
+        content = None,
+        function_call = tool_chunk.function,
+        role = "assistant",
+        tool_calls = [tool_chunk]
+    )
     return ChatCompletionChunk(
         id=get_id(),
+        object="chat.completion.chunk",
         created=int(time.time()),
         model=model,
-        choices=[ChatCompletionChoice(
-            index=0,
-            delta={"content": content},
-            finish_reason="stop" if is_final else None
-        )]
+        choices=[StreamingChoice(index=0, delta=delta, finish_reason=None)]
     )
 
 
 async def handle_stream_response(generator, model: str):
     """Handle streaming response generation."""
     try:
+        finish_reason = "stop"
         async for chunk in generator:
-            response_chunk = create_response_chunk(chunk, model)
-            yield f"data: {json.dumps(response_chunk.model_dump())}\n\n"
+            if chunk:
+                if isinstance(chunk, str):
+                    response_chunk = create_response_chunk(chunk, model)
+                    yield f"data: {json.dumps(response_chunk.model_dump())}\n\n"
+                else:
+                    finish_reason = "function_call"
+                    function = {
+                        "name": chunk["name"],
+                    }
+                    response_chunk = create_response_chunk(function, model)
+                    yield f"data: {json.dumps(response_chunk.model_dump())}\n\n"
+                    function_call = {
+                        "arguments": json.dumps(chunk["arguments"])
+                    }
+                    response_chunk = create_response_chunk(function_call, model)
+                    yield f"data: {json.dumps(response_chunk.model_dump())}\n\n"
+
     except Exception as e:
         logger.error(f"Error in stream wrapper: {str(e)}")
         error_response = {"error": {"message": str(e), "type": "server_error", "code": 500}}
         yield f"data: {json.dumps(error_response)}\n\n"
     finally:
-        final_chunk = create_response_chunk('', model, is_final=True)
+        final_chunk = create_response_chunk('', model, is_final=True, finish_reason=finish_reason)
         yield f"data: {json.dumps(final_chunk.model_dump())}\n\n"
         yield "data: [DONE]\n\n"
 
@@ -153,19 +199,6 @@ async def process_text_request(handler, request: ChatCompletionRequest):
         )
     return format_final_response(await handler.generate_text_response(request), request.model)
 
-def format_final_response(content: str, model: str) -> ChatCompletionResponse:
-    """Format the final non-streaming response."""
-    return ChatCompletionResponse(
-        id=get_id(),
-        created=int(time.time()),
-        model=model,
-        choices=[ChatCompletionChoice(
-            index=0,
-            message=Message(role="assistant", content=content),
-            finish_reason="stop"
-        )]
-    )
-
 def get_id():
     """
     Generate a unique ID for chat completions with timestamp and random component.
@@ -173,3 +206,51 @@ def get_id():
     timestamp = int(time.time())
     random_suffix = random.randint(0, 999999)
     return f"chatcmpl-{timestamp}{random_suffix:06d}"
+
+def get_tool_call_id():
+    """
+    Generate a unique ID for tool calls with timestamp and random component.
+    """
+    timestamp = int(time.time())
+    random_suffix = random.randint(0, 999999)
+    return f"call-{timestamp}{random_suffix:06d}"
+
+def format_final_response(response: Union[str, List[Dict[str, Any]]], model: str) -> ChatCompletionResponse:
+    """Format the final non-streaming response."""
+    
+    if isinstance(response, str):
+        return ChatCompletionResponse(
+            id=get_id(),
+            object="chat.completion",
+            created=int(time.time()),
+            model=model,
+            choices=[Choice(
+                index=0,
+                message=Message(role="assistant", content=response),
+                finish_reason="stop"
+            )]
+        )
+    tool_call_responses = []
+    for tool_call in response:
+        function_call = FunctionCall(
+            name=tool_call.get("name"),
+            arguments=json.dumps(tool_call.get("arguments"))
+        )
+        tool_call_response = ChatCompletionMessageToolCall(
+            id=get_tool_call_id(),
+            type="function",
+            function=function_call
+        )
+        tool_call_responses.append(tool_call_response)
+    
+    return ChatCompletionResponse(
+        id=get_id(),
+        object="chat.completion",
+        created=int(time.time()),
+        model=model,
+        choices=[Choice(
+            index=0,
+            message=Message(role="assistant", content=None, tool_calls=tool_call_responses),
+            finish_reason="function_call"
+        )]
+    )

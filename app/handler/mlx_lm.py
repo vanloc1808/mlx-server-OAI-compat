@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from app.core.metrics import RequestMetrics
 from app.core.queue import RequestQueue
 from app.models.mlx_lm import MLX_LM
+from app.handler.parser import parser_map
 from app.schemas.openai import ChatCompletionRequest, EmbeddingRequest
 
 # Configure logging
@@ -30,12 +31,16 @@ class MLXLMHandler:
         """
         self.model_path = model_path
         self.model = MLX_LM(model_path)
+        self.model_type = self.model.get_model_type()
+        self.tool_parser = None
+        if self.model_type in parser_map:
+            self.tool_parser = parser_map[self.model_type]()
         
         # Initialize request queue for text tasks
         self.request_queue = RequestQueue(max_concurrency=max_concurrency)
         
         # Initialize metrics tracking
-        self.metrics = RequestMetrics()
+        # self.metrics = RequestMetrics()
         
         logger.info(f"Initialized MLXHandler with model path: {model_path}")
     
@@ -71,10 +76,10 @@ class MLXLMHandler:
         
         try:
             # Start timing
-            start_time = time.time()
+            # start_time = time.time()
             request_start = time.time()
-            first_token_time = None
-            total_tokens = 0
+            # first_token_time = None
+            # total_tokens = 0
             
             # Prepare the text request
             chat_messages, model_params = await self._prepare_text_request(request)
@@ -91,48 +96,53 @@ class MLXLMHandler:
             
             # Process and yield each chunk
             first_chunk = True
-            for chunk in response_generator:
-                if chunk:
-                    if first_chunk:
-                        first_token_time = time.time() - request_start
-                        first_chunk = False
-                    
-                    text_chunk = ""
-                    if hasattr(chunk, 'text'):
-                        text_chunk = chunk.text
-                    elif isinstance(chunk, str):
-                        text_chunk = chunk
-                    else:
-                        text_chunk = str(chunk)
-                    
-                    # Update token count
-                    if text_chunk:
-                        total_tokens += RequestMetrics.estimate_tokens(text_chunk)["estimated_tokens"]
-                    
-                    yield text_chunk
+            buffer = ""
+            if model_params.get("tools", None) and self.tool_parser:
+                for chunk in response_generator:
+                    if chunk:
+                        # if first_chunk:
+                        #     first_token_time = time.time() - request_start
+                        #     first_chunk = False
+                        chunk = chunk.text
+                        buffer += chunk
+                        chunk, buffer = self.tool_parser.parse_stream(chunk, buffer)
+                        yield chunk
+            else:
+                for chunk in response_generator:
+                    if chunk:
+                        if first_chunk:
+                            # first_token_time = time.time() - request_start
+                            first_chunk = False
+                        
+                        chunk = chunk.text
+                        # # Update token count
+                        # if chunk:
+                        #     total_tokens += RequestMetrics.estimate_tokens(chunk)["estimated_tokens"]
+                        
+                        yield chunk
             
-            # Calculate metrics
-            elapsed_time = time.time() - start_time
-            tps = total_tokens / elapsed_time if elapsed_time > 0 else 0
-            ttft = first_token_time * 1000 if first_token_time else 0  # Convert to ms
-            throughput = 1 / elapsed_time if elapsed_time > 0 else 0  # requests per second
+            # # Calculate metrics
+            # elapsed_time = time.time() - start_time
+            # tps = total_tokens / elapsed_time if elapsed_time > 0 else 0
+            # ttft = first_token_time * 1000 if first_token_time else 0  # Convert to ms
+            # throughput = 1 / elapsed_time if elapsed_time > 0 else 0  # requests per second
             
-            # Update metrics
-            metrics = {
-                "tps": tps,
-                "ttft": ttft,
-                "throughput": throughput
-            }
-            self.metrics.update("text_stream", metrics)
+            # # Update metrics
+            # metrics = {
+            #     "tps": tps,
+            #     "ttft": ttft,
+            #     "throughput": throughput
+            # }
+            # self.metrics.update("text_stream", metrics)
             
         except asyncio.QueueFull:
-            self.metrics.increment_error_count()
+            # self.metrics.increment_error_count()
             raise HTTPException(
                 status_code=429,
                 detail="Too many requests. Service is at capacity."
             )
         except Exception as e:
-            self.metrics.increment_error_count()
+            # self.metrics.increment_error_count()
             logger.error(f"Error in text stream generation for request {request_id}: {str(e)}")
             raise HTTPException(
                 status_code=500,
@@ -169,32 +179,34 @@ class MLXLMHandler:
             
             # Submit to the request queue
             response = await self.request_queue.submit(request_id, request_data)
+
+            if model_params.get("tools", None) and self.tool_parser:
+                response = self.tool_parser.parse(response)     
+            # # Calculate metrics
+            # elapsed_time = time.time() - start_time
+            # estimated_tokens = RequestMetrics.estimate_tokens(response)["estimated_tokens"]
+            # tps = estimated_tokens / elapsed_time if elapsed_time > 0 else 0
+            # ttft = elapsed_time * 1000  # Convert to ms (for non-streaming, TTFT is full response time)
+            # throughput = 1 / elapsed_time if elapsed_time > 0 else 0  # requests per second
             
-            # Calculate metrics
-            elapsed_time = time.time() - start_time
-            estimated_tokens = RequestMetrics.estimate_tokens(response)["estimated_tokens"]
-            tps = estimated_tokens / elapsed_time if elapsed_time > 0 else 0
-            ttft = elapsed_time * 1000  # Convert to ms (for non-streaming, TTFT is full response time)
-            throughput = 1 / elapsed_time if elapsed_time > 0 else 0  # requests per second
-            
-            # Update metrics
-            metrics = {
-                "tps": tps,
-                "ttft": ttft,
-                "throughput": throughput
-            }
-            self.metrics.update("text", metrics)
+            # # Update metrics
+            # metrics = {
+            #     "tps": tps,
+            #     "ttft": ttft,
+            #     "throughput": throughput
+            # }
+            # self.metrics.update("text", metrics)
             
             return response
             
         except asyncio.QueueFull:
-            self.metrics.increment_error_count()
+            # self.metrics.increment_error_count()
             raise HTTPException(
                 status_code=429,
                 detail="Too many requests. Service is at capacity."
             )
         except Exception as e:
-            self.metrics.increment_error_count()
+            # self.metrics.increment_error_count()
             logger.error(f"Error in text response generation: {str(e)}")
             raise HTTPException(
                 status_code=500,
@@ -267,16 +279,16 @@ class MLXLMHandler:
                 **model_params
             )
             
-            # End timing and calculate metrics
-            end_time = time.time()
-            elapsed_time = end_time - start_time
+            # # End timing and calculate metrics
+            # end_time = time.time()
+            # elapsed_time = end_time - start_time
             
-            # Calculate tokens in the response
-            if isinstance(response, str):
-                metrics = RequestMetrics.estimate_tokens(response)
-                token_count = metrics["estimated_tokens"]
-                tps = token_count / elapsed_time if elapsed_time > 0 else 0
-                logger.info(f"Request completed: {token_count} tokens in {elapsed_time:.2f}s ({tps:.2f} tokens/sec)")
+            # # Calculate tokens in the response
+            # if isinstance(response, str):
+            #     metrics = RequestMetrics.estimate_tokens(response)
+            #     token_count = metrics["estimated_tokens"]
+            #     tps = token_count / elapsed_time if elapsed_time > 0 else 0
+            #     logger.info(f"Request completed: {token_count} tokens in {elapsed_time:.2f}s ({tps:.2f} tokens/sec)")
             
             return response
             
@@ -295,8 +307,24 @@ class MLXLMHandler:
         
         return {
             "queue_stats": queue_stats,
-            "metrics": self.metrics.get_summary()
+            # "metrics": self.metrics.get_summary()
         }
+        
+    async def cleanup(self):
+        """
+        Cleanup resources and stop the request queue before shutdown.
+        
+        This method ensures all pending requests are properly cancelled
+        and resources are released.
+        """
+        try:
+            logger.info("Cleaning up MLXLMHandler resources")
+            if hasattr(self, 'request_queue'):
+                await self.request_queue.stop()
+            logger.info("MLXLMHandler cleanup completed successfully")
+        except Exception as e:
+            logger.error(f"Error during MLXLMHandler cleanup: {str(e)}")
+            raise
 
     async def _prepare_text_request(self, request: ChatCompletionRequest) -> Tuple[List[Dict[str, str]], Dict[str, Any]]:
         """
