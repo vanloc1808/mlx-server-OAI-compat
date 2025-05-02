@@ -22,9 +22,9 @@ This repository hosts a high-performance API server that provides OpenAI-compati
   - [CLI Usage](#cli-usage)
   - [Using the API](#using-the-api)
 - [Request Queue System](#request-queue-system)
-- [Performance Monitoring](#performance-monitoring)
 - [API Response Schemas](#api-response-schemas)
 - [Example Notebooks](#example-notebooks)
+- [Large models](#large-models)
 - [Contributing](#contributing)
 - [License](#license)
 - [Support](#support)
@@ -468,114 +468,6 @@ The queue system handles various error conditions:
 }
 ```
 
-## Performance Monitoring
-
-The server includes comprehensive performance monitoring to help track and optimize model performance.
-
-### Key Features
-
-- **Token Generation Speed**: Real-time tracking of tokens per second (TPS)
-- **Request Metrics**: Detailed statistics for each request:
-  - Token counts
-  - Word counts
-  - Processing time
-  - Success/failure rates
-- **Performance History**: Maintains historical data for trend analysis
-- **Request Type Analysis**: Separate metrics for different request types:
-  - Vision vs. text requests
-  - Streaming vs. non-streaming requests
-- **Error Tracking**: Monitors and categorizes different types of errors
-
-### Performance Metrics
-
-Access detailed performance metrics through the `/v1/queue/stats` endpoint:
-
-```bash
-curl http://localhost:8000/v1/queue/stats
-```
-
-Example response with performance data:
-```json
-{
-  "status": "ok",
-  "queue_stats": {
-    "running": true,
-    "queue_size": 3,
-    "max_queue_size": 100,
-    "active_requests": 5,
-    "max_concurrency": 2
-  },
-  "metrics": {
-    "total_requests": 100,
-    "total_tokens": 5000,
-    "total_time": 50.5,
-    "request_types": {
-      "vision": 40,
-      "vision_stream": 20,
-      "text": 30,
-      "text_stream": 10
-    },
-    "error_count": 2,
-    "performance": {
-      "avg_tps": 99.0,
-      "max_tps": 150.0,
-      "min_tps": 50.0,
-      "recent_requests": 100
-    }
-  }
-}
-```
-
-### Metrics System Design
-
-The performance metrics system is designed for reliability and accuracy:
-
-1. **Standardized Metrics**: All request handlers use a consistent metrics format
-2. **Fault Tolerance**: The system includes fallbacks for missing data:
-   ```python
-   # Example of safe metrics access
-   self.metrics["total_tokens"] += metrics.get("token_count", metrics.get("estimated_tokens", 0))
-   ```
-3. **Real-time Updates**: Metrics are updated as requests are processed
-4. **Historical Tracking**: Maintains a history of recent requests for trend analysis
-5. **Error Resilience**: Continues operating even if some metrics fail to collect
-
-## API Response Schemas
-
-The server implements comprehensive Pydantic schemas for request and response handling, ensuring type safety and validation:
-
-### Request Schemas
-- `ChatCompletionRequest`: Handles chat completion requests with support for:
-  - Text and vision messages
-  - Streaming options
-  - Model parameters (temperature, top_p, etc.)
-  - Tool calls and function calling
-- `EmbeddingRequest`: Manages embedding generation requests
-
-### Response Schemas
-- `ChatCompletionResponse`: Standard chat completion responses
-- `ChatCompletionChunk`: Streaming response chunks
-- `EmbeddingResponse`: Embedding generation responses
-- `ErrorResponse`: Standardized error responses
-
-Example response structure:
-```python
-{
-    "id": "chatcmpl-1234567890",
-    "object": "chat.completion",
-    "created": 1234567890,
-    "model": "local-model",
-    "choices": [{
-        "index": 0,
-        "message": {
-            "role": "assistant",
-            "content": "The response content"
-        },
-        "finish_reason": "stop"
-    }]
-}
-```
-
 ### Streaming Responses
 
 The server supports streaming responses with proper chunk formatting:
@@ -590,6 +482,105 @@ The server supports streaming responses with proper chunk formatting:
         "delta": {"content": "chunk of text"},
         "finish_reason": null
     }]
+}
+```
+
+## API Response Schemas
+
+The server implements OpenAI-compatible API response schemas to ensure seamless integration with existing applications. Below are the key response formats:
+
+### Chat Completions Response
+
+```json
+{
+  "id": "chatcmpl-123456789",
+  "object": "chat.completion",
+  "created": 1677858242,
+  "model": "local-model",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "This is the response content from the model."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 10,
+    "completion_tokens": 20,
+    "total_tokens": 30
+  }
+}
+```
+
+### Embeddings Response
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "embedding",
+      "embedding": [0.001, 0.002, ..., 0.999],
+      "index": 0
+    }
+  ],
+  "model": "local-model",
+  "usage": {
+    "prompt_tokens": 8,
+    "total_tokens": 8
+  }
+}
+```
+
+### Function/Tool Calling Response
+
+```json
+{
+  "id": "chatcmpl-123456789",
+  "object": "chat.completion",
+  "created": 1677858242,
+  "model": "local-model",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_abc123",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"city\":\"Tokyo\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 15,
+    "completion_tokens": 25,
+    "total_tokens": 40
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "error": {
+    "message": "Error message describing what went wrong",
+    "type": "invalid_request_error",
+    "param": null,
+    "code": null
+  }
 }
 ```
 
@@ -622,6 +613,15 @@ The repository includes example notebooks to help you get started with different
   - Calculating similarity between text and image representations
   - Understanding the shared embedding space of multimodal models
   - Practical applications of VLM embeddings
+
+## Large models
+When using models that are large relative to your system's available RAM, performance may suffer. mlx-lm tries to improve speed by wiring the memory used by the model and its cache—this optimization is only available on macOS 15.0 or newer.
+If you see the following warning message:
+> [WARNING] Generating with a model that requires ...
+it means the model may run slowly on your machine. If the model fits in RAM, you can often improve performance by raising the system's wired memory limit. To do this, run:
+```bash
+bash configure_mlx.sh
+```
 
 ## Contributing
 We welcome contributions to improve this project! Here's how you can contribute:
