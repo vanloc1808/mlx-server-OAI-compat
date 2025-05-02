@@ -383,6 +383,24 @@ class MLXVLMHandler:
         if hasattr(self, 'image_processor'):
             await self.image_processor.cleanup()
 
+    async def cleanup(self):
+        """
+        Cleanup resources and stop the request queue before shutdown.
+        
+        This method ensures all pending requests are properly cancelled
+        and resources are released, including the image processor.
+        """
+        try:
+            logger.info("Cleaning up MLXVLMHandler resources")
+            if hasattr(self, 'request_queue'):
+                await self.request_queue.stop()
+            if hasattr(self, 'image_processor'):
+                await self.image_processor.cleanup()
+            logger.info("MLXVLMHandler cleanup completed successfully")
+        except Exception as e:
+            logger.error(f"Error during MLXVLMHandler cleanup: {str(e)}")
+            raise
+
     async def _process_request(self, request_data: Dict[str, Any]) -> str:
         """
         Process a vision request. This is the worker function for the request queue.
