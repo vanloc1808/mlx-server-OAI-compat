@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional, Union
+from typing_extensions import Literal
 
 from pydantic import BaseModel, Field, validator
 
@@ -19,6 +20,7 @@ class ErrorResponse(BaseModel):
     param: Optional[str] = None
     code: int
 
+# Common models used in both streaming and non-streaming contexts
 class ImageUrl(BaseModel):
     """
     Represents an image URL in a message.
@@ -33,48 +35,50 @@ class VisionContentItem(BaseModel):
     text: Optional[str] = None
     image_url: Optional[ImageUrl] = None
 
-# Data Models
+class FunctionCall(BaseModel):
+    """
+    Represents a function call in a message.
+    """
+    arguments: str
+    name: str
+
+class ChatCompletionMessageToolCall(BaseModel):
+    """
+    Represents a tool call in a message.
+    """
+    id: str
+    function: FunctionCall
+    type: Literal["function"]
+
 class Message(BaseModel):
     """
-    Represents a single message in a chat completion request.
+    Represents a message in a chat completion.
     """
-    role: str      # The role of the message sender (e.g., 'user', 'assistant')
-    content: Union[str, List[VisionContentItem]]  # The content of the message
+    content: Optional[str] = None
+    refusal: Optional[str] = None
+    role: Literal["system", "user", "assistant"]
+    function_call: Optional[FunctionCall] = None
+    tool_calls: Optional[List[ChatCompletionMessageToolCall]] = None
 
-class ToolCall(BaseModel):
+# Common request base for both streaming and non-streaming
+class ChatCompletionRequestBase(BaseModel):
     """
-    Represents a tool call within a chat completion request.
+    Base model for chat completion requests.
     """
-    type: str             # The type of tool call
-    function: Dict[str, str]  # Details of the function to be called
-
-class EmbeddingRequest(BaseModel):
-    """
-    Model for embedding requests.
-    """
-    model: str = Config.EMBEDDING_MODEL     # Model to use, defaults to embedding model
-    input: List[str] = Field(..., description="List of text inputs for embedding")  # Text inputs to embed
-    image_url: str = Field(default=None, description="Image URL to embed") # Image URL to embed
- 
-class ChatCompletionRequest(BaseModel):
-    """
-    Model for chat completion requests, including messages, streaming option, and tools.
-    """
-    model: str = Config.TEXT_MODEL          # Model to use, defaults to text model
-    messages: List[Message]                 # List of messages in the chat
-    stream: Optional[bool] = False          # Whether to stream the response
-    tools: Optional[List[Dict[str, Any]]] = None  # Optional list of tools to use
-    tool_choice: Optional[Union[str, Dict[str, Any]]] = None  # Tool selection behavior
-    max_tokens: Optional[int] = None        # Maximum number of tokens to generate
-    temperature: Optional[float] = 0.7      # Sampling temperature
-    top_p: Optional[float] = 1.0           # Nucleus sampling parameter
-    frequency_penalty: Optional[float] = 0.0  # Frequency penalty
-    presence_penalty: Optional[float] = 0.0   # Presence penalty
-    stop: Optional[List[str]] = None        # Stop sequences
-    n: Optional[int] = 1                    # Number of completions to generate
-    response_format: Optional[Dict[str, str]] = None  # Response format specification
-    seed: Optional[int] = None              # Random seed for deterministic outputs
-    user: Optional[str] = None              # User identifier for tracking
+    model: str = Config.TEXT_MODEL
+    messages: List[Message]
+    tools: Optional[List[Dict[str, Any]]] = None
+    tool_choice: Optional[Union[str, Dict[str, Any]]] = None
+    max_tokens: Optional[int] = None
+    temperature: Optional[float] = 0.7
+    top_p: Optional[float] = 1.0
+    frequency_penalty: Optional[float] = 0.0
+    presence_penalty: Optional[float] = 0.0
+    stop: Optional[List[str]] = None
+    n: Optional[int] = 1
+    response_format: Optional[Dict[str, str]] = None
+    seed: Optional[int] = None
+    user: Optional[str] = None
 
     @validator("messages")
     def check_messages_not_empty(cls, v):
@@ -135,43 +139,99 @@ class ChatCompletionRequest(BaseModel):
         
         logger.debug(f"No images detected, treating as text-only request")
         return False
-    
-class Embedding(BaseModel):
-    """
-    Represents an embedding object in a chat completion request.
-    """
-    embedding: List[float] = Field(..., description="The embedding vector")
-    index: int = Field(..., description="The index of the embedding in the list")
-    object: str = Field(default="embedding", description="The object type")
 
-class ChatCompletionChoice(BaseModel):
+# Non-streaming request and response
+class ChatCompletionRequest(ChatCompletionRequestBase):
+    """
+    Model for non-streaming chat completion requests.
+    """
+    stream: bool = False
+
+class Choice(BaseModel):
     """
     Represents a choice in a chat completion response.
     """
+    finish_reason: Literal["stop", "length", "tool_calls", "content_filter", "function_call"]
     index: int
-    message: Optional[Message] = None
-    delta: Optional[Dict[str, Any]] = None
-    finish_reason: Optional[str] = None
+    message: Message
 
 class ChatCompletionResponse(BaseModel):
     """
     Represents a complete chat completion response.
     """
     id: str
-    object: str = "chat.completion"
+    object: Literal["chat.completion"]
     created: int
     model: str
-    choices: List[ChatCompletionChoice]
+    choices: List[Choice]
 
+# Streaming request and response
+class StreamChatCompletionRequest(ChatCompletionRequestBase):
+    """
+    Model for streaming chat completion requests.
+    """
+    stream: bool = True
+
+class ChoiceDeltaFunctionCall(BaseModel):
+    """
+    Represents a function call delta in a streaming response.
+    """
+    arguments: Optional[str] = None
+    name: Optional[str] = None
+
+class ChoiceDeltaToolCall(BaseModel):
+    """
+    Represents a tool call delta in a streaming response.
+    """
+    index: Optional[int] = None
+    id: Optional[str] = None
+    function: Optional[ChoiceDeltaFunctionCall] = None
+    type: Optional[str] = None
+
+class Delta(BaseModel):
+    """
+    Represents a delta in a streaming response.
+    """
+    content: Optional[str] = None
+    function_call: Optional[ChoiceDeltaFunctionCall] = None
+    refusal: Optional[str] = None
+    role: Optional[Literal["system", "user", "assistant", "tool"]] = None
+    tool_calls: Optional[List[ChoiceDeltaToolCall]] = None
+
+class StreamingChoice(BaseModel):
+    """
+    Represents a choice in a streaming response.
+    """
+    delta: Delta
+    finish_reason: Optional[Literal["stop", "length", "tool_calls", "content_filter", "function_call"]] = None
+    index: int
+    
 class ChatCompletionChunk(BaseModel):
     """
-    Represents a streaming chunk in a chat completion response.
+    Represents a chunk in a streaming chat completion response.
     """
     id: str
-    object: str = "chat.completion.chunk"
+    choices: List[StreamingChoice]
     created: int
     model: str
-    choices: List[ChatCompletionChoice]
+    object: Literal["chat.completion.chunk"]
+
+# Embedding models
+class EmbeddingRequest(BaseModel):
+    """
+    Model for embedding requests.
+    """
+    model: str = Config.EMBEDDING_MODEL
+    input: List[str] = Field(..., description="List of text inputs for embedding")
+    image_url: Optional[str] = Field(default=None, description="Image URL to embed")
+
+class Embedding(BaseModel):
+    """
+    Represents an embedding object in an embedding response.
+    """
+    embedding: List[float] = Field(..., description="The embedding vector")
+    index: int = Field(..., description="The index of the embedding in the list")
+    object: str = Field(default="embedding", description="The object type")
 
 class EmbeddingResponse(BaseModel):
     """
