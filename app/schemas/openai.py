@@ -56,7 +56,7 @@ class Message(BaseModel):
     """
     content: Optional[str] = None
     refusal: Optional[str] = None
-    role: Literal["system", "user", "assistant"]
+    role: Literal["system", "user", "assistant", "tool"]
     function_call: Optional[FunctionCall] = None
     tool_calls: Optional[List[ChatCompletionMessageToolCall]] = None
 
@@ -94,7 +94,7 @@ class ChatCompletionRequestBase(BaseModel):
             raise ValueError("message history too long")
             
         # Validate message roles
-        valid_roles = {"user", "assistant", "system"}
+        valid_roles = {"user", "assistant", "system", "tool"}
         for msg in v:
             if msg.role not in valid_roles:
                 raise ValueError(f"invalid role: {msg.role}")
