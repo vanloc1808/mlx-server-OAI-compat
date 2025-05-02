@@ -10,7 +10,7 @@ from typing import List, Dict, Union, Generator, Optional, Tuple
 DEFAULT_TEMPERATURE = 0.0
 DEFAULT_TOP_P = 1.0
 DEFAULT_SEED = 0
-DEFAULT_MAX_TOKENS = 256
+DEFAULT_MAX_TOKENS = 512
 DEFAULT_BATCH_SIZE = 32
 
 class MLX_LM:
@@ -24,9 +24,9 @@ class MLX_LM:
     def __init__(self, model_path: str):
         try:
             self.model, self.tokenizer = load(model_path)
-            # Pre-compute tokenizer properties
             self.pad_token_id = self.tokenizer.pad_token_id
             self.bos_token = self.tokenizer.bos_token
+            self.model_type = self.model.model_type
         except Exception as e:
             raise ValueError(f"Error loading model: {str(e)}")
         
@@ -69,6 +69,9 @@ class MLX_LM:
         add_special_tokens = self.bos_token is None or not prompt.startswith(self.bos_token)
         tokens = self.tokenizer.encode(prompt, add_special_tokens=add_special_tokens)
         return mx.array(tokens)
+    
+    def get_model_type(self) -> str:
+        return self.model_type
     
     def get_embeddings(
         self, 
@@ -130,16 +133,21 @@ class MLX_LM:
 
         mx.random.seed(seed)
 
+        chat_template_kwargs = {
+            "add_generation_prompt": True,
+            "tools": kwargs.get("tools", None),
+            "enable_thinking": kwargs.get("enable_thinking", False)
+        }
+
         # Prepare input tokens
         prompt = self.tokenizer.apply_chat_template(
             messages,
-            add_generation_prompt=True,                
+            **chat_template_kwargs
         )
         
         sampler = make_sampler(temperature, top_p)
         
         if not stream:
-            # Non-streaming mode: return complete response
             return generate(
                 self.model,
                 self.tokenizer,
