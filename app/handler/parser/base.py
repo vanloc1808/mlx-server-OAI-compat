@@ -51,7 +51,6 @@ class BaseToolParser:
 
                 try:
                     json_output = json.loads(tool_content)  
-                    print("Parsed tool: ", json_output)
                     res.append(json_output)
                 except json.JSONDecodeError:
                     print("Error parsing tool call: ", tool_content)
