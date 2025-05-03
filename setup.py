@@ -10,7 +10,7 @@ setup(
     packages=find_packages(),
     install_requires=[
         "mlx-vlm==0.1.25",
-        "mlx-lm==0.23.1",
+        "mlx-lm==0.24.0",
         "fastapi",
         "uvicorn",
         "Pillow",

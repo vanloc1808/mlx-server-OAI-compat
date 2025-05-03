@@ -1,21 +1,10 @@
 import asyncio
 import base64
-import hashlib
 import logging
-import os
-import tempfile
 import time
 import uuid
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
-from functools import lru_cache
-from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
-
-import requests
 from fastapi import HTTPException
-from PIL import Image
-
 from app.core.image_processor import ImageProcessor
 from app.core.metrics import RequestMetrics
 from app.core.queue import RequestQueue
@@ -50,7 +39,7 @@ class MLXVLMHandler:
         self.request_queue = RequestQueue(max_concurrency=max_concurrency)
         
         # Initialize metrics tracking
-        self.metrics = RequestMetrics()
+        # self.metrics = RequestMetrics()
         
         logger.info(f"Initialized MLXHandler with model path: {model_path}")
     
@@ -87,10 +76,10 @@ class MLXVLMHandler:
         # Submit the vision request directly (not through queue for streaming)
         try:
             # Start timing
-            start_time = time.time()
-            total_tokens = 0
-            total_words = 0
-            total_chars = 0
+            # start_time = time.time()
+            # total_tokens = 0
+            # total_words = 0
+            # total_chars = 0
 
             chat_messages, image_paths, model_params = await self._prepare_vision_request(request)
             
@@ -108,46 +97,40 @@ class MLXVLMHandler:
             # Process and yield each chunk asynchronously
             for chunk in response_generator:
                 if chunk:
-                    text_chunk = ""
-                    if hasattr(chunk, 'text'):
-                        text_chunk = chunk.text
-                    elif isinstance(chunk, str):
-                        text_chunk = chunk
-                    else:
-                        text_chunk = str(chunk)
+                    chunk = chunk.text
                     
-                    # Update token count
-                    if text_chunk:
-                        chunk_metrics = RequestMetrics.estimate_tokens(text_chunk)
-                        total_tokens += chunk_metrics["estimated_tokens"]
-                        total_words += chunk_metrics["word_count"]
-                        total_chars += chunk_metrics["char_count"]
+                    # # Update token count
+                    # if chunk:
+                    #     chunk_metrics = RequestMetrics.estimate_tokens(chunk)
+                    #     total_tokens += chunk_metrics["estimated_tokens"]
+                    #     total_words += chunk_metrics["word_count"]
+                    #     total_chars += chunk_metrics["char_count"]
                     
-                    yield text_chunk
+                    yield chunk
             
             # Calculate and log TPS statistics
-            elapsed_time = time.time() - start_time
-            tps = total_tokens / elapsed_time if elapsed_time > 0 else 0
+            # elapsed_time = time.time() - start_time
+            # tps = total_tokens / elapsed_time if elapsed_time > 0 else 0
             
-            # Update metrics
-            metrics = {
-                "token_count": total_tokens,
-                "word_count": total_words,
-                "char_count": total_chars,
-                "elapsed_time": elapsed_time,
-                "tps": tps
-            }
-            self.metrics.update("vision_stream", metrics)
+            # # Update metrics
+            # metrics = {
+            #     "token_count": total_tokens,
+            #     "word_count": total_words,
+            #     "char_count": total_chars,
+            #     "elapsed_time": elapsed_time,
+            #     "tps": tps
+            # }
+            # self.metrics.update("vision_stream", metrics)
         
         except asyncio.QueueFull:
-            self.metrics.increment_error_count()
+            # self.metrics.increment_error_count()
             raise HTTPException(
                 status_code=429,
                 detail="Too many requests. Service is at capacity."
             )
 
         except Exception as e:
-            self.metrics.increment_error_count()
+            # self.metrics.increment_error_count()
             logger.error(f"Error in vision stream generation for request {request_id}: {str(e)}")
             raise HTTPException(
                 status_code=500,
@@ -197,18 +180,18 @@ class MLXVLMHandler:
                 "tps": tps,
                 "token_count": metrics["estimated_tokens"]
             })
-            self.metrics.update("vision", metrics)
+            # self.metrics.update("vision", metrics)
             
             return response
             
         except asyncio.QueueFull:
-            self.metrics.increment_error_count()
+            # self.metrics.increment_error_count()
             raise HTTPException(
                 status_code=429,
                 detail="Too many requests. Service is at capacity."
             )
         except Exception as e:
-            self.metrics.increment_error_count()
+            # self.metrics.increment_error_count()
             logger.error(f"Error in vision response generation: {str(e)}")
             raise HTTPException(
                 status_code=500,
@@ -230,11 +213,11 @@ class MLXVLMHandler:
         request_id = f"text-{uuid.uuid4()}"
         
         try:
-            # Start timing
-            start_time = time.time()
-            total_tokens = 0
-            total_words = 0
-            total_chars = 0
+            # # Start timing
+            # start_time = time.time()
+            # total_tokens = 0
+            # total_words = 0
+            # total_chars = 0
             
             # Prepare the text request
             chat_messages, model_params = await self._prepare_text_request(request)
@@ -252,45 +235,39 @@ class MLXVLMHandler:
             # Process and yield each chunk
             for chunk in response_generator:
                 if chunk:
-                    text_chunk = ""
-                    if hasattr(chunk, 'text'):
-                        text_chunk = chunk.text
-                    elif isinstance(chunk, str):
-                        text_chunk = chunk
-                    else:
-                        text_chunk = str(chunk)
+                    chunk = chunk.text
                     
-                    # Update token count
-                    if text_chunk:
-                        chunk_metrics = RequestMetrics.estimate_tokens(text_chunk)
-                        total_tokens += chunk_metrics["estimated_tokens"]
-                        total_words += chunk_metrics["word_count"]
-                        total_chars += chunk_metrics["char_count"]
+                    # # Update token count
+                    # if text_chunk:
+                    #     chunk_metrics = RequestMetrics.estimate_tokens(text_chunk)
+                    #     total_tokens += chunk_metrics["estimated_tokens"]
+                    #     total_words += chunk_metrics["word_count"]
+                    #     total_chars += chunk_metrics["char_count"]
                     
-                    yield text_chunk
+                    yield chunk
             
-            # Calculate and log TPS statistics
-            elapsed_time = time.time() - start_time
-            tps = total_tokens / elapsed_time if elapsed_time > 0 else 0
+            # # Calculate and log TPS statistics
+            # elapsed_time = time.time() - start_time
+            # tps = total_tokens / elapsed_time if elapsed_time > 0 else 0
             
-            # Update metrics
-            metrics = {
-                "token_count": total_tokens,
-                "word_count": total_words,
-                "char_count": total_chars,
-                "elapsed_time": elapsed_time,
-                "tps": tps
-            }
-            self.metrics.update("text_stream", metrics)
+            # # Update metrics
+            # metrics = {
+            #     "token_count": total_tokens,
+            #     "word_count": total_words,
+            #     "char_count": total_chars,
+            #     "elapsed_time": elapsed_time,
+            #     "tps": tps
+            # }
+            # self.metrics.update("text_stream", metrics)
             
         except asyncio.QueueFull:
-            self.metrics.increment_error_count()
+            # self.metrics.increment_error_count()
             raise HTTPException(
                 status_code=429,
                 detail="Too many requests. Service is at capacity."
             )
         except Exception as e:
-            self.metrics.increment_error_count()
+            # self.metrics.increment_error_count()
             logger.error(f"Error in text stream generation for request {request_id}: {str(e)}")
             raise HTTPException(
                 status_code=500,
@@ -323,34 +300,34 @@ class MLXVLMHandler:
             }
             
             # Start timing
-            start_time = time.time()
+            # start_time = time.time()
             
             # Submit to the vision queue (reusing the same queue for text requests)
             response = await self.request_queue.submit(request_id, request_data)
             
             # Calculate and log TPS statistics
-            elapsed_time = time.time() - start_time
-            metrics = RequestMetrics.estimate_tokens(response)
-            tps = metrics["estimated_tokens"] / elapsed_time if elapsed_time > 0 else 0
+            # elapsed_time = time.time() - start_time
+            # metrics = RequestMetrics.estimate_tokens(response)
+            # tps = metrics["estimated_tokens"] / elapsed_time if elapsed_time > 0 else 0
             
             # Update metrics
-            metrics.update({
-                "elapsed_time": elapsed_time,
-                "tps": tps,
-                "token_count": metrics["estimated_tokens"]
-            })
-            self.metrics.update("text", metrics)
+            # metrics.update({
+            #     "elapsed_time": elapsed_time,
+            #     "tps": tps,
+            #     "token_count": metrics["estimated_tokens"]
+            # })
+            # self.metrics.update("text", metrics)
             
             return response
             
         except asyncio.QueueFull:
-            self.metrics.increment_error_count()
+            # self.metrics.increment_error_count()
             raise HTTPException(
                 status_code=429,
                 detail="Too many requests. Service is at capacity."
             )
         except Exception as e:
-            self.metrics.increment_error_count()
+            # self.metrics.increment_error_count()
             logger.error(f"Error in text response generation: {str(e)}")
             raise HTTPException(
                 status_code=500,
@@ -406,6 +383,24 @@ class MLXVLMHandler:
         if hasattr(self, 'image_processor'):
             await self.image_processor.cleanup()
 
+    async def cleanup(self):
+        """
+        Cleanup resources and stop the request queue before shutdown.
+        
+        This method ensures all pending requests are properly cancelled
+        and resources are released, including the image processor.
+        """
+        try:
+            logger.info("Cleaning up MLXVLMHandler resources")
+            if hasattr(self, 'request_queue'):
+                await self.request_queue.stop()
+            if hasattr(self, 'image_processor'):
+                await self.image_processor.cleanup()
+            logger.info("MLXVLMHandler cleanup completed successfully")
+        except Exception as e:
+            logger.error(f"Error during MLXVLMHandler cleanup: {str(e)}")
+            raise
+
     async def _process_request(self, request_data: Dict[str, Any]) -> str:
         """
         Process a vision request. This is the worker function for the request queue.
@@ -443,17 +438,17 @@ class MLXVLMHandler:
                 **model_params
             )
             
-            # End timing and calculate metrics
-            end_time = time.time()
-            elapsed_time = end_time - start_time
+            # # End timing and calculate metrics
+            # end_time = time.time()
+            # elapsed_time = end_time - start_time
             
-            # Calculate tokens in the response
-            # For simple text responses, approximating token count as words/1.3
-            if isinstance(response, str):
-                metrics = RequestMetrics.estimate_tokens(response)
-                token_count = metrics["estimated_tokens"]
-                tps = token_count / elapsed_time if elapsed_time > 0 else 0
-                logger.info(f"Request completed: {token_count} tokens in {elapsed_time:.2f}s ({tps:.2f} tokens/sec)")
+            # # Calculate tokens in the response
+            # # For simple text responses, approximating token count as words/1.3
+            # if isinstance(response, str):
+            #     metrics = RequestMetrics.estimate_tokens(response)
+            #     token_count = metrics["estimated_tokens"]
+            #     tps = token_count / elapsed_time if elapsed_time > 0 else 0
+            #     logger.info(f"Request completed: {token_count} tokens in {elapsed_time:.2f}s ({tps:.2f} tokens/sec)")
             
             return response
             
@@ -472,7 +467,7 @@ class MLXVLMHandler:
         
         return {
             "queue_stats": queue_stats,
-            "metrics": self.metrics.get_summary()
+            # "metrics": self.metrics.get_summary()
         }
 
     async def _prepare_text_request(self, request: ChatCompletionRequest) -> Tuple[List[Dict[str, str]], Dict[str, Any]]:
