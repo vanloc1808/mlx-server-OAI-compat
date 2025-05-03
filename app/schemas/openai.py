@@ -54,7 +54,7 @@ class Message(BaseModel):
     """
     Represents a message in a chat completion.
     """
-    content: Optional[str] = None
+    content: Union[str, List[VisionContentItem]]
     refusal: Optional[str] = None
     role: Literal["system", "user", "assistant", "tool"]
     function_call: Optional[FunctionCall] = None
