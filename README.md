@@ -614,6 +614,13 @@ The repository includes example notebooks to help you get started with different
   - Understanding the shared embedding space of multimodal models
   - Practical applications of VLM embeddings
 
+- **rag_examples.ipynb**: A practical guide to building a lightweight Retrieval-Augmented Generation (RAG) pipeline over PDF documents using local MLX Server, including:
+- Reading and chunking PDF documents  
+- Generating text embeddings via MLX Server  
+- Creating a simple vector store for retrieval  
+- Performing question answering based on relevant chunks
+- End-to-end demonstration of document QA using local models
+- [Check out the video demo](https://www.youtube.com/watch?v=ANUEZkmR-0s)
 ## Large models
 When using models that are large relative to your system's available RAM, performance may suffer. mlx-lm tries to improve speed by wiring the memory used by the model and its cache—this optimization is only available on macOS 15.0 or newer.
 If you see the following warning message:
