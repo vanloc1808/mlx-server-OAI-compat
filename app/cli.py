@@ -3,8 +3,6 @@ import click
 import uvicorn
 from loguru import logger
 import sys
-import os
-import warnings
 from functools import lru_cache
 from app.version import __version__
 from app.main import setup_server
