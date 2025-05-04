@@ -178,7 +178,7 @@ async def handle_stream_response(generator, model: str):
 
     except Exception as e:
         logger.error(f"Error in stream wrapper: {str(e)}")
-        error_response = {"error": {"message": str(e), "type": "server_error", "code": 500}}
+        error_response = create_error_response(str(e), "server_error", HTTPStatus.INTERNAL_SERVER_ERROR)
         yield f"data: {json.dumps(error_response)}\n\n"
     finally:
         final_chunk = create_response_chunk('', model, is_final=True, finish_reason=finish_reason)

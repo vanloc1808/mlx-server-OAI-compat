@@ -3,14 +3,14 @@ import logging
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple, AsyncGenerator
+from http import HTTPStatus
 
 from fastapi import HTTPException
-
-from app.core.metrics import RequestMetrics
 from app.core.queue import RequestQueue
 from app.models.mlx_lm import MLX_LM
 from app.handler.parser import get_parser
 from app.schemas.openai import ChatCompletionRequest, EmbeddingRequest
+from app.utils.errors import create_error_response
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -94,16 +94,13 @@ class MLXLMHandler:
                         yield chunk.text
             
         except asyncio.QueueFull:
-            raise HTTPException(
-                status_code=429,
-                detail="Too many requests. Service is at capacity."
-            )
+            logger.error("Too many requests. Service is at capacity.")
+            content = create_error_response("Too many requests. Service is at capacity.", "rate_limit_exceeded", HTTPStatus.TOO_MANY_REQUESTS)
+            raise HTTPException(status_code=429, detail=content)
         except Exception as e:
             logger.error(f"Error in text stream generation for request {request_id}: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to generate text stream: {str(e)}"
-            )
+            content = create_error_response(f"Failed to generate text stream: {str(e)}", "server_error", HTTPStatus.INTERNAL_SERVER_ERROR)
+            raise HTTPException(status_code=500, detail=content)
 
     async def generate_text_response(self, request: ChatCompletionRequest) -> str:
         """
@@ -142,16 +139,13 @@ class MLXLMHandler:
             return response
             
         except asyncio.QueueFull:
-            raise HTTPException(
-                status_code=429,
-                detail="Too many requests. Service is at capacity."
-            )
+            logger.error("Too many requests. Service is at capacity.")
+            content = create_error_response("Too many requests. Service is at capacity.", "rate_limit_exceeded", HTTPStatus.TOO_MANY_REQUESTS)
+            raise HTTPException(status_code=429, detail=content)
         except Exception as e:
             logger.error(f"Error in text response generation: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to generate text response: {str(e)}"
-            )
+            content = create_error_response(f"Failed to generate text response: {str(e)}", "server_error", HTTPStatus.INTERNAL_SERVER_ERROR)
+            raise HTTPException(status_code=500, detail=content)
         
     async def generate_embeddings_response(self, request: EmbeddingRequest):
         """
@@ -179,10 +173,8 @@ class MLXLMHandler:
 
         except Exception as e:
             logger.error(f"Error in embeddings generation: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to generate embeddings: {str(e)}"
-            )
+            content = create_error_response(f"Failed to generate embeddings: {str(e)}", "server_error", HTTPStatus.INTERNAL_SERVER_ERROR)
+            raise HTTPException(status_code=500, detail=content)
         
 
     async def _process_request(self, request_data: Dict[str, Any]) -> str:
@@ -257,69 +249,47 @@ class MLXLMHandler:
 
     async def _prepare_text_request(self, request: ChatCompletionRequest) -> Tuple[List[Dict[str, str]], Dict[str, Any]]:
         """
-        Prepare a text-only request by processing messages.
+        Prepare a text request by parsing model parameters and verifying the format of messages.
         
         Args:
-            request (ChatCompletionRequest): The incoming request containing messages and parameters.
-            
+            request: ChatCompletionRequest object containing the messages.
+        
         Returns:
-            Tuple[List[Dict[str, str]], Dict[str, Any]]: A tuple containing:
-                - List of processed chat messages
-                - Dictionary of model parameters
-                
-        Raises:
-            HTTPException: If message content is invalid.
+            Tuple containing the formatted chat messages and model parameters.
         """
-        chat_messages = []
-
         try:
+            # Get model parameters from the request
+            temperature = request.temperature or 0.7
+            top_p = request.top_p or 1.0
+            frequency_penalty = request.frequency_penalty or 0.0
+            presence_penalty = request.presence_penalty or 0.0
+            max_tokens = request.max_tokens or 1024
+            enable_thinking = request.enable_thinking or False
+            tools = request.tools or None
+            tool_choice = request.tool_choice or None
+
+            model_params = {
+                "temperature": temperature,
+                "top_p": top_p,
+                "frequency_penalty": frequency_penalty,
+                "presence_penalty": presence_penalty,
+                "max_tokens": max_tokens,
+                "tools": tools,
+                "enable_thinking": enable_thinking,
+                "tool_choice": tool_choice
+            }
             
-            # Convert Message objects to dictionaries with 'role' and 'content' keys
+            # Format chat messages
             chat_messages = []
             for message in request.messages:
-                # Only handle simple string content for text-only requests
-                if not isinstance(message.content, str):
-                    logger.warning(f"Non-string content in text request will be skipped: {message.role}")
-                    continue
-                
                 chat_messages.append({
                     "role": message.role,
                     "content": message.content
                 })
-
-            # Extract model parameters, filtering out None values
-            model_params = {
-                k: v for k, v in {
-                    "max_tokens": request.max_tokens,
-                    "temperature": request.temperature,
-                    "top_p": request.top_p,
-                    "frequency_penalty": request.frequency_penalty, 
-                    "presence_penalty": request.presence_penalty,
-                    "stop": request.stop,
-                    "n": request.n,
-                    "seed": request.seed,
-                    "enable_thinking": request.enable_thinking
-                }.items() if v is not None
-            }
-
-            # Handle response format
-            if request.response_format and request.response_format.get("type") == "json_object":
-                model_params["response_format"] = "json"
-
-            # Handle tools and tool choice
-            if request.tools:
-                model_params["tools"] = request.tools
-                if request.tool_choice:
-                    model_params["tool_choice"] = request.tool_choice
-
-            # Log processed data
-            logger.debug(f"Processed text chat messages: {chat_messages}")
-            logger.debug(f"Model parameters: {model_params}")
-
+            
             return chat_messages, model_params
-
-        except HTTPException:
-            raise
+        
         except Exception as e:
             logger.error(f"Failed to prepare text request: {str(e)}")
-            raise HTTPException(status_code=400, detail=f"Failed to process request: {str(e)}")
+            content = create_error_response(f"Failed to process request: {str(e)}", "bad_request", HTTPStatus.BAD_REQUEST)
+            raise HTTPException(status_code=400, detail=content)

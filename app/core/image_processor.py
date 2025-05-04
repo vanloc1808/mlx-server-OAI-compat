@@ -130,7 +130,25 @@ class ImageProcessor:
         return await asyncio.gather(*tasks, return_exceptions=True)
 
     async def cleanup(self):
-        if self._session and not self._session.closed:
-            await self._session.close()
-        self.executor.shutdown(wait=True)
-        self.temp_dir.cleanup()
+        if hasattr(self, '_cleaned') and self._cleaned:
+            return
+        self._cleaned = True
+        try:
+            if self._session and not self._session.closed:
+                await self._session.close()
+        except Exception as e:
+            logger.warning(f"Exception closing aiohttp session: {str(e)}")
+        try:
+            self.executor.shutdown(wait=True)
+        except Exception as e:
+            logger.warning(f"Exception shutting down executor: {str(e)}")
+        try:
+            self.temp_dir.cleanup()
+        except Exception as e:
+            logger.warning(f"Exception cleaning up temp_dir: {str(e)}")
+
+    def __del__(self):
+        try:
+            self.cleanup()
+        except Exception as e:
+            logger.warning(f"Exception during __del__ cleanup: {str(e)}")
