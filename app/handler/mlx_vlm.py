@@ -7,12 +7,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from http import HTTPStatus
 
 from fastapi import HTTPException
-from app.core.image_processor import ImageProcessor
-from app.core.metrics import RequestMetrics
-from app.core.queue import RequestQueue
-from app.models.mlx_vlm import MLX_VLM
-from app.schemas.openai import ChatCompletionRequest, EmbeddingRequest
-from app.utils.errors import create_error_response
+from ...app.core.image_processor import ImageProcessor
+from ...app.core.metrics import RequestMetrics
+from ...app.core.queue import RequestQueue
+from ...app.models.mlx_vlm import MLX_VLM
+from ...app.schemas.openai import ChatCompletionRequest, EmbeddingRequest
+from ...app.utils.errors import create_error_response
 
 # Configure logging
 logger = logging.getLogger(__name__)
