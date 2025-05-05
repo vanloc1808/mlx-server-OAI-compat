@@ -6,11 +6,11 @@ from typing import Any, Dict, List, Optional, Tuple, AsyncGenerator
 from http import HTTPStatus
 
 from fastapi import HTTPException
-from ..app.core.queue import RequestQueue
-from ..app.models.mlx_lm import MLX_LM
-from ..app.handler.parser import get_parser
-from ..app.schemas.openai import ChatCompletionRequest, EmbeddingRequest
-from ..app.utils.errors import create_error_response
+from ..core.queue import RequestQueue
+from ..models.mlx_lm import MLX_LM
+from ..handler.parser import get_parser
+from ..schemas.openai import ChatCompletionRequest, EmbeddingRequest
+from ..utils.errors import create_error_response
 
 # Configure logging
 logger = logging.getLogger(__name__)
