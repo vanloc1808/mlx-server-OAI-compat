@@ -11,7 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.handler.mlx_vlm import MLXVLMHandler
-from app.handler.mlx_lm import MLXLMHandler 
+from app.handler.mlx_lm import MLXLMHandler
+from app.handler.mlx_tts import MLXTTSHandler
 from app.api.endpoints import router
 from app.version import __version__
 
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 def parse_args():
     parser = argparse.ArgumentParser(description="OAI-compatible proxy")
     parser.add_argument("--model-path", type=str, required=True, help="Huggingface model repo or local path")
-    parser.add_argument("--model-type", type=str, default="lm", choices=["lm", "vlm"], help="Model type")
+    parser.add_argument("--model-type", type=str, default="lm", choices=["lm", "vlm", "tts"], help="Model type")
     parser.add_argument("--port", type=int, default=8000, help="Port to run the server on")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to run the server on")
     parser.add_argument("--max-concurrency", type=int, default=1, help="Maximum number of concurrent requests")
@@ -45,11 +46,16 @@ def create_lifespan(config_args):
                     model_path=config_args.model_path,
                     max_concurrency=config_args.max_concurrency
                 )
+            elif config_args.model_type == "tts":
+                handler = MLXTTSHandler(
+                    model_path=config_args.model_path,
+                    max_concurrency=config_args.max_concurrency
+                )
             else:
                 handler = MLXLMHandler(
                     model_path=config_args.model_path,
                     max_concurrency=config_args.max_concurrency
-                )       
+                )
             # Initialize queue
             await handler.initialize({
                 "max_concurrency": config_args.max_concurrency,
@@ -73,7 +79,7 @@ def create_lifespan(config_args):
                 logger.info("Resources cleaned up successfully")
             except Exception as e:
                 logger.error(f"Error during shutdown: {str(e)}")
-    
+
     return lifespan
 
 # App instance will be created during setup with the correct lifespan
@@ -81,7 +87,7 @@ app = None
 
 async def setup_server(args) -> uvicorn.Config:
     global app
-    
+
     # Create FastAPI app with the configured lifespan
     app = FastAPI(
         title="OpenAI-compatible API",
@@ -89,9 +95,9 @@ async def setup_server(args) -> uvicorn.Config:
         version=__version__,
         lifespan=create_lifespan(args)
     )
-    
+
     app.include_router(router)
-    
+
     # Add CORS middleware
     app.add_middleware(
         CORSMiddleware,
@@ -100,7 +106,7 @@ async def setup_server(args) -> uvicorn.Config:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
+
     @app.middleware("http")
     async def add_process_time_header(request: Request, call_next):
         start_time = time.time()
@@ -108,7 +114,7 @@ async def setup_server(args) -> uvicorn.Config:
         process_time = time.time() - start_time
         response.headers["X-Process-Time"] = str(process_time)
         return response
-    
+
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
         logger.error(f"Global exception handler caught: {str(exc)}", exc_info=True)
@@ -116,7 +122,7 @@ async def setup_server(args) -> uvicorn.Config:
             status_code=500,
             content={"error": {"message": "Internal server error", "type": "internal_error"}}
         )
-    
+
     logger.info(f"Starting server on {args.host}:{args.port}")
     config = uvicorn.Config(
         app=app,

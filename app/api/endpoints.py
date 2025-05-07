@@ -5,10 +5,10 @@ import time
 from http import HTTPStatus
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, Response
 
 from app.schemas.openai import (
-    EmbeddingRequest, Embedding, EmbeddingResponse, 
+    EmbeddingRequest, Embedding, EmbeddingResponse,
     ChatCompletionRequest, ChatCompletionChunk, Choice, Message, FunctionCall, StreamingChoice,
     ChatCompletionResponse, ChatCompletionMessageToolCall, ChoiceDeltaToolCall, ChoiceDeltaFunctionCall, Delta
 )
@@ -42,7 +42,7 @@ async def queue_stats(raw_request: Request):
     handler = raw_request.app.state.handler
     if handler is None:
         return JSONResponse(content= create_error_response("Model handler not initialized", "service_unavailable", 503), status_code=503)
-    
+
     try:
         stats = await handler.get_queue_stats()
         return {
@@ -52,7 +52,7 @@ async def queue_stats(raw_request: Request):
     except Exception as e:
         logger.error(f"Failed to get queue stats: {str(e)}")
         return JSONResponse(content= create_error_response("Failed to get queue stats", "server_error", 500), status_code=500)
-        
+
 
 @router.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest, raw_request: Request):
@@ -60,30 +60,30 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
     handler = raw_request.app.state.handler
     if handler is None:
         return JSONResponse(content=create_error_response("Model handler not initialized", "service_unavailable", 503), status_code=503)
-    
+
     try:
-        
+
         # Check if this is a vision request
         is_vision_request = request.is_vision_request()
-        
+
         # If it's a vision request but the handler is MLXLMHandler (text-only), reject it
         if is_vision_request and isinstance(handler, MLXLMHandler):
             return JSONResponse(
                 content=create_error_response(
-                    "Vision requests are not supported with text-only models. Use a VLM model type instead.", 
-                    "unsupported_request", 
+                    "Vision requests are not supported with text-only models. Use a VLM model type instead.",
+                    "unsupported_request",
                     400
-                ), 
+                ),
                 status_code=400
             )
-        
+
         # Process the request based on type
         return await process_vision_request(handler, request) if is_vision_request \
                else await process_text_request(handler, request)
     except Exception as e:
         logger.error(f"Error processing chat completion request: {str(e)}", exc_info=True)
         return JSONResponse(content=create_error_response(str(e)), status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
-    
+
 @router.post("/v1/embeddings")
 async def embeddings(request: EmbeddingRequest, raw_request: Request):
     """Handle embedding requests."""
@@ -97,7 +97,7 @@ async def embeddings(request: EmbeddingRequest, raw_request: Request):
     except Exception as e:
         logger.error(f"Error processing embedding request: {str(e)}", exc_info=True)
         return JSONResponse(content=create_error_response(str(e)), status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
-    
+
 def create_response_embeddings(embeddings: List[float], model: str) -> EmbeddingResponse:
     embeddings_response = []
     for index, embedding in enumerate(embeddings):
@@ -154,7 +154,7 @@ async def handle_stream_response(generator, model: str):
     """Handle streaming response generation."""
     try:
         finish_reason = "stop"
-        index = 0   
+        index = 0
         async for chunk in generator:
             if chunk:
                 if isinstance(chunk, str):
@@ -223,7 +223,7 @@ def get_tool_call_id():
 
 def format_final_response(response: Union[str, List[Dict[str, Any]]], model: str) -> ChatCompletionResponse:
     """Format the final non-streaming response."""
-    
+
     if isinstance(response, str):
         return ChatCompletionResponse(
             id=get_id(),
@@ -250,7 +250,7 @@ def format_final_response(response: Union[str, List[Dict[str, Any]]], model: str
             function=function_call
         )
         tool_call_responses.append(tool_call_response)
-    
+
     return ChatCompletionResponse(
         id=get_id(),
         object="chat.completion",
@@ -262,3 +262,23 @@ def format_final_response(response: Union[str, List[Dict[str, Any]]], model: str
             finish_reason="function_call"
         )]
     )
+
+@router.post("/v1/audio/speech")
+async def text_to_speech(request: TTSRequest, raw_request: Request):
+    """Handle text-to-speech requests."""
+    handler = raw_request.app.state.handler
+    if handler is None:
+        return JSONResponse(content=create_error_response("Model handler not initialized", "service_unavailable", 503), status_code=503)
+
+    try:
+        audio_data = await handler.generate_speech(request)
+        return Response(
+            content=audio_data.audio,
+            media_type=f"audio/{audio_data.format}",
+            headers={
+                "Content-Disposition": f'attachment; filename="speech.{audio_data.format}"'
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error processing text-to-speech request: {str(e)}", exc_info=True)
+        return JSONResponse(content=create_error_response(str(e)), status_code=HTTPStatus.INTERNAL_SERVER_ERROR)

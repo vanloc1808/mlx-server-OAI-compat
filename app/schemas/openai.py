@@ -88,17 +88,17 @@ class ChatCompletionRequestBase(BaseModel):
         """
         if not v:
             raise ValueError("messages cannot be empty")
-        
+
         # Validate message history length
         if len(v) > 100:  # OpenAI's limit is typically around 100 messages
             raise ValueError("message history too long")
-            
+
         # Validate message roles
         valid_roles = {"user", "assistant", "system", "tool"}
         for msg in v:
             if msg.role not in valid_roles:
                 raise ValueError(f"invalid role: {msg.role}")
-                
+
         return v
 
     @validator("temperature")
@@ -128,7 +128,7 @@ class ChatCompletionRequestBase(BaseModel):
         """
         import logging
         logger = logging.getLogger(__name__)
-        
+
         for message in self.messages:
             content = message.content
             if isinstance(content, list):
@@ -137,7 +137,7 @@ class ChatCompletionRequestBase(BaseModel):
                         if hasattr(item, 'image_url') and item.image_url and item.image_url.url:
                             logger.debug(f"Detected vision request with image: {item.image_url.url[:30]}...")
                             return True
-        
+
         logger.debug(f"No images detected, treating as text-only request")
         return False
 
@@ -206,7 +206,7 @@ class StreamingChoice(BaseModel):
     delta: Delta
     finish_reason: Optional[Literal["stop", "length", "tool_calls", "content_filter", "function_call"]] = None
     index: int
-    
+
 class ChatCompletionChunk(BaseModel):
     """
     Represents a chunk in a streaming chat completion response.
@@ -241,3 +241,20 @@ class EmbeddingResponse(BaseModel):
     object: str = "list"
     data: List[Embedding]
     model: str
+
+# TTS models
+class TTSRequest(BaseModel):
+    """
+    Model for text-to-speech requests.
+    """
+    model: str = "gpt-4o-mini-tts"
+    input: str = Field(..., description="The text to convert to speech")
+    voice: str = Field(..., description="The voice to use for speech synthesis")
+    response_format: Optional[str] = Field(default="mp3", description="The format of the audio output")
+
+class TTSResponse(BaseModel):
+    """
+    Represents a text-to-speech response.
+    """
+    audio: bytes
+    format: str
